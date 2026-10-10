@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E33 Mod Mixer</title>
+<style>
+:root{--bg:#f6f4ef;--panel:#fffdf8;--ink:#1d1b18;--muted:#6b665d;--line:#e2ddd2;--accent:#8a5a1f;--accent-ink:#fff;
+--ok:#2f7a4a;--warn:#9a6a00;--err:#b2382f;--chip:#efe9dc;--chip-on:#1d1b18;--chip-on-ink:#fffdf8}
+@media (prefers-color-scheme:dark){:root{--bg:#15130f;--panel:#1d1b16;--ink:#ece6da;--muted:#a39d91;--line:#34302a;
+--accent:#d9a45b;--accent-ink:#15130f;--ok:#6fc18c;--warn:#e0b24f;--err:#f07a70;--chip:#2a2620;--chip-on:#ece6da;--chip-on-ink:#15130f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0;letter-spacing:.2px}
+.paths{color:var(--muted);font-size:12px;display:flex;flex-direction:column;gap:2px}
+.paths code{font-size:12px}
+main{display:grid;grid-template-columns:260px 1fr;min-height:calc(100vh - 64px)}
+@media (max-width:760px){main{grid-template-columns:1fr}nav{border-right:0;border-bottom:1px solid var(--line)}}
+nav{border-right:1px solid var(--line);padding:12px}
+nav h2,section h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:8px 4px}
+.mod{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer}
+.mod:hover{background:var(--chip)}
+.mod.sel{background:var(--chip);outline:1px solid var(--line)}
+.mod .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sw{appearance:none;width:34px;height:20px;border-radius:20px;background:var(--line);position:relative;cursor:pointer;flex:none}
+.sw:checked{background:var(--ok)}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--panel);transition:left .15s}
+.sw:checked::after{left:16px}
+section{padding:16px 22px;max-width:980px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+.row{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:start;padding:8px 0;border-top:1px dashed var(--line)}
+.row:first-of-type{border-top:0}
+@media (max-width:560px){.row{grid-template-columns:1fr}}
+.lbl{color:var(--muted);padding-top:5px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:999px;padding:5px 12px;cursor:pointer;font:inherit}
+.chip[aria-pressed=true]{background:var(--chip-on);color:var(--chip-on-ink);border-color:var(--chip-on)}
+.help{color:var(--muted);font-size:12px;margin-top:4px}
+ul.paks{margin:6px 0 0;padding-left:18px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.msg{padding:6px 10px;border-radius:8px;margin:6px 0;font-size:13px;border-left:3px solid}
+.msg.info{border-color:var(--muted);background:var(--chip)}
+.msg.warn{border-color:var(--warn);background:var(--chip)}
+.msg.error{border-color:var(--err);background:var(--chip)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button.act{font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:7px 14px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button:disabled{opacity:.45;cursor:not-allowed}
+select,input[type=text]{font:inherit;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.pill{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--chip);color:var(--muted)}
+.pill.pending{color:var(--warn)}
+.pill.ok{color:var(--ok)}
+pre.log{font-size:12px;white-space:pre-wrap;margin:8px 0 0;color:var(--muted)}
+.empty{color:var(--muted);padding:30px 4px}
+.notes{color:var(--muted);font-size:13px;margin:4px 0 8px}
+.chip{display:inline-flex;align-items:center;gap:6px}
+.chip img.th{width:26px;height:26px;border-radius:50%;object-fit:cover;margin:-3px 0 -3px -7px;border:1px solid var(--line);background:var(--bg)}
+.pv{display:grid;grid-template-columns:minmax(160px,260px) 1fr;gap:16px;align-items:start}
+@media (max-width:640px){.pv{grid-template-columns:1fr}}
+.pv .big{width:100%;aspect-ratio:3/4;border-radius:10px;border:1px solid var(--line);background:var(--chip);display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--muted);font-size:13px;text-align:center;padding:0}
+.pv .big img{width:100%;height:100%;object-fit:cover;display:block}
+.strip{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+.sw-item{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--muted);max-width:84px;text-align:center;word-break:break-all}
+.sw-item img{width:72px;height:72px;border-radius:8px;border:1px solid var(--line);image-rendering:auto;object-fit:cover;background:var(--bg)}
+.looks{display:flex;flex-wrap:wrap;gap:8px}
+.look{position:relative;width:76px;height:100px;border-radius:8px;overflow:hidden;border:1px solid var(--line);cursor:pointer;background:var(--chip)}
+.look img{width:100%;height:100%;object-fit:cover}
+.look.cur{outline:2px solid var(--accent)}
+.look .x{position:absolute;top:2px;right:2px;border:0;border-radius:50%;width:20px;height:20px;line-height:18px;background:rgba(0,0,0,.6);color:#fff;cursor:pointer;font-size:12px;padding:0}
+#hover{position:fixed;pointer-events:none;z-index:20;display:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+#hover img{display:block;max-width:220px;max-height:280px;border-radius:6px}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);padding:16px;width:min(920px,96vw)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:52vh;overflow:auto;margin:10px 0}
+.shots button{border:1px solid var(--line);border-radius:8px;padding:0;overflow:hidden;cursor:pointer;background:var(--chip);color:var(--muted);font-size:11px;text-align:left}
+.shots img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
+.shots span{display:block;padding:3px 6px}
+#crop{max-width:100%;cursor:crosshair;border-radius:8px;display:block;margin:8px 0;touch-action:none}
+progress{width:180px}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>E33 Mod Mixer</h1><div class="paths" id="paths"></div></div>
+  <div class="bar"><span class="pill" id="status"></span>
+    <button class="act" id="rescan" title="Re-read the library folder">Rescan</button>
+    <button class="act primary" id="apply">Apply to game</button></div>
+</header>
+<main>
+  <nav><h2>Library</h2><div id="mods"></div>
+    <h2 style="margin-top:22px">Presets</h2>
+    <div class="bar" style="padding:0 4px"><select id="presetSel" aria-label="Preset"></select>
+      <button class="act" id="presetLoad">Load</button><button class="act" id="presetDel" title="Delete preset">✕</button></div>
+    <div class="bar" style="padding:8px 4px"><input type="text" id="presetName" placeholder="New preset name" size="14">
+      <button class="act" id="presetSave">Save</button></div>
+    <div style="padding:14px 4px"><button class="act" id="off" title="Remove every file the mixer placed in ~mods">Disable all</button></div>
+  </nav>
+  <section id="detail"></section>
+</main>
+<div id="hover"><img alt=""></div>
+<dialog id="shotDlg">
+  <div class="bar" style="justify-content:space-between"><strong>Add a screenshot of this look</strong><button class="act" id="dlgClose">Close</button></div>
+  <div id="dlgPick">
+    <p class="help">Apply the combination, start the game, take a screenshot (Steam F12, Win+Alt+PrtScn or Win+PrtScn), then pick it here. Your newest screenshots:</p>
+    <div class="shots" id="shotList"></div>
+    <div class="bar"><label class="act" style="display:inline-block">Choose a file…<input type="file" id="shotFile" accept="image/*" hidden></label>
+      <span class="help" id="shotDirs"></span></div>
+  </div>
+  <div id="dlgCrop" hidden>
+    <p class="help">Drag a box around the character, then save. It is stored with the current choices.</p>
+    <canvas id="crop"></canvas>
+    <div class="bar"><button class="act" id="cropBack">Back</button><button class="act primary" id="cropSave">Save look</button></div>
+  </div>
+</dialog>
+<script>
+const TOKEN='__TOKEN__';let S=null,cur=localStorage.getItem('e33mixer.mod')||null,lastApply=null;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(path,body){const r=await fetch(path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},body:JSON.stringify(body)});
+ const j=await r.json();if(!r.ok){alert(j.error||'Request failed');return null}return j}
+async function load(){S=await api('/api/state');render()}
+async function post(path,body){const j=await api(path,body);if(j){if(j.apply)lastApply=j.apply;S=j.mods?j:S;if(!j.mods)await load();else render()}}
+function previewCard(m){
+ const P=m.previews||{},job=S.swatch_job||{};
+ let big=P.look?`<img src="/previews/${esc(P.look)}" alt="Screenshot of this look">`:'No screenshot of this combination yet.<br>Add one below.';
+ let cap=P.look?(P.look_exact?'Your screenshot of exactly this combination.':'Closest screenshot you saved (some choices differ).'):'';
+ let h=`<div class="pv" style="margin-top:14px"><div><div class="big">${big}</div><div class="help">${cap}</div></div><div>`;
+ h+=`<div class="bar"><button class="act" id="addShot">📷 Add screenshot…</button>`;
+ if(job.running&&job.mod===m.name)h+=`<progress max="${job.total}" value="${job.done}"></progress><span class="help">${esc(job.current||'')}</span>`;
+ else h+=`<button class="act" id="mkSw" ${S.retoc_found?'':'disabled title="Needs retoc.exe next to the tools (see docs/INSTALL.md)"'}>🎨 ${P.swatched?'Update':'Make'} color swatches</button>`;
+ h+='</div>';
+ if(!S.retoc_found)h+='<div class="help">Color swatches need retoc.exe next to the tools (see docs/INSTALL.md, retoc).</div>';
+ if((P.swatches||[]).length){h+='<h2 style="margin:12px 0 0">Textures of what will be installed</h2><div class="strip">'+
+   P.swatches.map(s=>s.images.map(i=>`<div class="sw-item" title="${esc(s.folder)}"><img src="/previews/${esc(i.file)}" alt=""><span>${esc(i.texture)}</span></div>`).join('')).join('')+'</div>'}
+ else if(P.swatched)h+='<div class="help" style="margin-top:8px">No color textures in the selected paks (they may only change shape or reuse game textures).</div>';
+ if((P.looks||[]).length){h+='<h2 style="margin:12px 0 0">Saved looks · click to use that combination</h2><div class="looks">'+
+   P.looks.map(l=>`<div class="look ${l.id===P.look_id&&P.look_exact?'cur':''}" data-look="${esc(l.id)}" title="${esc(l.created||'')}"><img src="/previews/${esc(l.file)}" alt=""><button class="x" data-del="${esc(l.id)}" title="Delete">×</button></div>`).join('')+'</div>'}
+ if(job.log&&job.log.length&&job.mod===m.name&&!job.running)h+=`<details style="margin-top:8px"><summary class="help">Last swatch run</summary><pre class="log">${esc(job.log.join('\n'))}</pre></details>`;
+ return h+'</div></div>';
+}
+function render(){
+ $('#paths').innerHTML=`Library <code>${esc(S.library)}</code><br>Installs into <code>${esc(S.mods_dir||'(game not found)')}\\_E33Mixer</code>`;
+ const st=$('#status');st.className='pill '+(S.pending?'pending':'ok');
+ st.textContent=S.pending?'Changes not applied yet':'Game folder matches'+(S.game_running?' · game running: restart it':'');
+ const ml=$('#mods');ml.innerHTML='';
+ if(!S.mods.length){ml.innerHTML='<div class="empty">No mods yet. Extract each mod into its own folder inside the library, then press Rescan.</div>'}
+ if(!cur||!S.mods.find(m=>m.name===cur))cur=S.mods[0]&&S.mods[0].name;
+ for(const m of S.mods){const d=document.createElement('div');d.className='mod'+(m.name===cur?' sel':'');
+  const errs=m.messages.filter(x=>x.level==='error').length;
+  d.innerHTML=`<input type="checkbox" class="sw" ${m.enabled?'checked':''} aria-label="Enable ${esc(m.name)}"><span class="nm">${esc(m.name)}</span>${errs?'<span title="has errors" style="color:var(--err)">●</span>':''}`;
+  d.querySelector('input').onclick=e=>{e.stopPropagation();post('/api/select',{mod:m.name,enabled:e.target.checked})};
+  d.onclick=()=>{cur=m.name;localStorage.setItem('e33mixer.mod',cur);render()};ml.appendChild(d)}
+ const ps=$('#presetSel');ps.innerHTML=S.presets.map(p=>`<option>${esc(p)}</option>`).join('')||'<option value="">(none saved)</option>';
+ const m=S.mods.find(x=>x.name===cur);const det=$('#detail');
+ if(!m){det.innerHTML='';return}
+ let h=`<div class="card"><div class="bar" style="justify-content:space-between"><h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:17px;color:var(--ink)">${esc(m.name)}</h2>
+  <span class="pill">${m.auto?'Auto layout (no rules file)':'Rules: '+esc(m.rules_name)}</span></div>
+  <div class="bar" style="margin-top:8px"><label class="help" for="prio">Priority</label>
+   <input type="number" id="prio" min="0" max="99" value="${m.priority}" style="width:4.5em">
+   <span class="help">When two mods change the same thing, the lower number wins.</span></div>`;
+ h+=previewCard(m);
+ if(m.notes)h+=`<p class="notes">${esc(m.notes)}</p>`;
+ if(!m.enabled)h+=`<div class="msg info">This mod is switched off. Turn it on in the list to install it.</div>`;
+ for(const c of m.choices){if(!c.visible)continue;
+  h+=`<div class="row"><div class="lbl">${esc(c.label)}</div><div>`;
+  const po=(m.previews.per_option||{})[c.id]||{};
+  if(c.options.length>16){h+=`<select data-c="${esc(c.id)}">${c.options.map(o=>`<option value="${esc(o.value)}" ${o.value===c.value?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`}
+  else{h+='<div class="chips">'+c.options.map(o=>{const pv=po[o.value]||{};const th=pv.swatch||pv.look;const big=pv.look||pv.swatch;
+    return `<button class="chip" data-c="${esc(c.id)}" data-v="${esc(o.value)}" aria-pressed="${o.value===c.value}"${big?` data-big="${esc(big)}"`:''}>${th?`<img class="th" src="/previews/${esc(th)}" alt="">`:''}${esc(o.label)}</button>`}).join('')+'</div>'}
+  if(c.help)h+=`<div class="help">${esc(c.help)}</div>`;h+='</div></div>'}
+ h+='</div><div class="card"><h2 style="margin-top:0">Will install</h2>';
+ h+=m.paks.length?`<ul class="paks">${m.paks.map(p=>`<li>${esc(p||'(mod root)')}</li>`).join('')}</ul>`:'<div class="help">Nothing: the vanilla look is kept.</div>';
+ for(const x of m.messages){const lv=['info','warn','error'].includes(x.level)?x.level:'warn';h+=`<div class="msg ${lv}">${esc(x.text)}</div>`}
+ h+='</div>';
+ if(S.loose_duplicates.length)h+=`<div class="card"><div class="msg warn">These files are also installed by hand in ~mods. Remove them so they don't clash:</div><ul class="paks">${S.loose_duplicates.map(d=>`<li>${esc(d)}</li>`).join('')}</ul></div>`;
+ if(lastApply)h+=`<div class="card"><h2 style="margin-top:0">Last apply</h2>${lastApply.ok?'<div class="msg info">Done.</div>':''}${(lastApply.errors||[]).map(e=>`<div class="msg error">${esc(e)}</div>`).join('')}<pre class="log">${esc((lastApply.log||[]).join('\n')||'No file changes needed.')}</pre></div>`;
+ if(S.warnings&&S.warnings.length)h=S.warnings.map(w=>`<div class="msg warn">${esc(w)}</div>`).join('')+h;
+ det.innerHTML=h;
+ const pr=det.querySelector('#prio');if(pr)pr.onchange=()=>post('/api/select',{mod:m.name,priority:parseInt(pr.value||'50',10)});
+ det.querySelectorAll('button.chip').forEach(b=>b.onclick=()=>post('/api/select',{mod:m.name,choice:b.dataset.c,value:b.dataset.v}));
+ det.querySelectorAll('select[data-c]').forEach(s=>s.onchange=()=>post('/api/select',{mod:m.name,choice:s.dataset.c,value:s.value}));
+ const hv=$('#hover');
+ det.querySelectorAll('[data-big]').forEach(b=>{b.onmouseenter=()=>{hv.querySelector('img').src='/previews/'+b.dataset.big;hv.style.display='block'};
+  b.onmousemove=e=>{hv.style.left=Math.min(e.clientX+16,innerWidth-240)+'px';hv.style.top=Math.min(e.clientY+16,innerHeight-300)+'px'};
+  b.onmouseleave=()=>{hv.style.display='none'}});
+ const as=det.querySelector('#addShot');if(as)as.onclick=()=>openShots(m.name);
+ const ms=det.querySelector('#mkSw');if(ms)ms.onclick=()=>post('/api/swatches',{mod:m.name,force:!!m.previews.swatched});
+ det.querySelectorAll('.look').forEach(l=>l.onclick=e=>{if(e.target.dataset.del){if(confirm('Delete this saved look?'))post('/api/look/delete',{mod:m.name,id:e.target.dataset.del});return}
+  post('/api/look/apply',{mod:m.name,id:l.dataset.look})});
+ const job=S.swatch_job||{};if(job.running&&!window._poll){window._poll=setInterval(async()=>{await load();if(!(S.swatch_job||{}).running){clearInterval(window._poll);window._poll=null}},1000)}
+}
+// ---------------------------------------------------------------- screenshot capture
+let dlgMod=null,cropImg=null,sel=null,scale=1;
+async function openShots(mod){dlgMod=mod;$('#dlgPick').hidden=false;$('#dlgCrop').hidden=true;$('#shotDlg').showModal();
+ $('#shotList').innerHTML='<span class="help">Looking for screenshots…</span>';
+ const r=await api('/api/shots');if(!r)return;
+ $('#shotDirs').textContent=r.dirs.length?'Searched: '+r.dirs.join(' · '):'No screenshot folders found — use "Choose a file".';
+ $('#shotList').innerHTML=r.shots.length?r.shots.map(s=>`<button data-id="${s.id}"><img loading="lazy" src="/api/shot?id=${s.id}" alt=""><span>${esc(s.time)} · ${esc(s.name)}</span></button>`).join(''):'<span class="help">No screenshots found.</span>';
+ $('#shotList').querySelectorAll('button').forEach(b=>b.onclick=()=>startCrop('/api/shot?id='+b.dataset.id))}
+$('#shotFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>startCrop(rd.result);rd.readAsDataURL(f);e.target.value=''};
+$('#dlgClose').onclick=()=>$('#shotDlg').close();
+$('#cropBack').onclick=()=>{$('#dlgPick').hidden=false;$('#dlgCrop').hidden=true};
+function startCrop(src){const img=new Image();img.onload=()=>{cropImg=img;$('#dlgPick').hidden=true;$('#dlgCrop').hidden=false;
+  const cv=$('#crop'),maxW=Math.min(880,$('#shotDlg').clientWidth-40),maxH=innerHeight*0.6;scale=Math.min(maxW/img.width,maxH/img.height,1);
+  cv.width=Math.round(img.width*scale);cv.height=Math.round(img.height*scale);
+  const h=img.height*0.9,w=Math.min(img.width,h*0.6);sel={x:(img.width-w)/2,y:(img.height-h)/2,w,h};drawCrop()};img.src=src}
+function drawCrop(){const cv=$('#crop'),c=cv.getContext('2d');c.drawImage(cropImg,0,0,cv.width,cv.height);
+ c.fillStyle='rgba(0,0,0,.55)';const x=sel.x*scale,y=sel.y*scale,w=sel.w*scale,h=sel.h*scale;
+ c.fillRect(0,0,cv.width,y);c.fillRect(0,y+h,cv.width,cv.height-y-h);c.fillRect(0,y,x,h);c.fillRect(x+w,y,cv.width-x-w,h);
+ c.strokeStyle='#fff';c.lineWidth=2;c.strokeRect(x,y,w,h)}
+(()=>{const cv=$('#crop');let start=null;
+ const pt=e=>{const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)*(cv.width/r.width)/scale,y:(e.clientY-r.top)*(cv.height/r.height)/scale}};
+ cv.onpointerdown=e=>{start=pt(e);cv.setPointerCapture(e.pointerId)};
+ cv.onpointermove=e=>{if(!start)return;const p=pt(e);sel={x:Math.max(0,Math.min(start.x,p.x)),y:Math.max(0,Math.min(start.y,p.y)),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};drawCrop()};
+ cv.onpointerup=()=>{start=null;if(sel.w<20||sel.h<20){sel={x:0,y:0,w:cropImg.width,h:cropImg.height}};drawCrop()}})();
+$('#cropSave').onclick=async()=>{const k=Math.min(1,720/sel.h),out=document.createElement('canvas');out.width=Math.round(sel.w*k);out.height=Math.round(sel.h*k);
+ out.getContext('2d').drawImage(cropImg,sel.x,sel.y,sel.w,sel.h,0,0,out.width,out.height);
+ const j=await api('/api/look/save',{mod:dlgMod,image:out.toDataURL('image/jpeg',0.88)});if(j){$('#shotDlg').close();S=j.mods?j:S;await load()}};
+$('#apply').onclick=()=>post('/api/apply',{});
+$('#off').onclick=()=>{if(confirm('Remove all mixer-installed files from ~mods?'))post('/api/off',{})};
+$('#rescan').onclick=()=>post('/api/rescan',{});
+$('#presetSave').onclick=()=>{const n=$('#presetName').value.trim();if(n)post('/api/preset/save',{name:n}).then(()=>{$('#presetName').value=''})};
+$('#presetLoad').onclick=()=>{const n=$('#presetSel').value;if(n)post('/api/preset/load',{name:n})};
+$('#presetDel').onclick=()=>{const n=$('#presetSel').value;if(n&&confirm('Delete preset '+n+'?'))post('/api/preset/delete',{name:n})};
+load();
+</script>
+</body>
+</html>

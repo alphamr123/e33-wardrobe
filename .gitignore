@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Mixer: machine-specific config and state (paths on your PC)
+tools/e33mixer_config.json
+*.corrupt-*
+.e33mixer_state.json
+.e33mixer_manifest.json
+.e33mixer_previews/
+*.tmp
+
+# Third-party binaries users put next to the tools (never commit; Oodle is proprietary)
+tools/retoc
+tools/retoc.exe
+*.dll
+*.exe
+
+# Lua mod runtime files (written next to the mod when it runs from this folder)
+lua/E33Wardrobe/selection.txt
+lua/E33Wardrobe/settings.txt
+lua/E33Wardrobe/presets.txt
+lua/E33Wardrobe/live_log.txt
+lua/E33Wardrobe/live_log_previous.txt
+lua/E33Wardrobe/dump.txt
+lua/E33Wardrobe/report.txt
+lua/E33Wardrobe/wardrobe_registry.json
+# lua/E33Wardrobe/Scripts/variants.lua is a tracked placeholder (return {}); keep it tracked.
+
+# Relocator outputs and work folders
+relocate_console*.txt
+relocate_log.txt
+relocate_report.json
+_e33wardrobe_work_*/
+_e33mixer_swatch_*/
+
+# Game and mod data, test fixtures: never commit (copyrighted game or third-party files)
+*.pak
+*.utoc
+*.ucas
+*.uasset
+*.uexp
+*.ubulk
+*.uptnl
+*.umap
+*.usmap
+*.jmap
+tests/fixtures/
+tests/data/
+
+# Release builds, logs, crash dumps
+dist/
+UE4SS.log
+*.log
+*.dmp
+*.DMP
+
+# Nexus upload notes (kept locally, not published) and stray archives
+/release/
+*.zip
+*.7z
+*.rar

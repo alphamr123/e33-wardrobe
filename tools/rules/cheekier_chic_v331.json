@@ -1,0 +1,236 @@
+{
+  "format": 1,
+  "name": "Cheekier Chic (v3.3.1)",
+  "source": "https://www.nexusmods.com/clairobscurexpedition33/mods/685",
+  "notes": "Encodes the author's install rules: per character pick vanilla / Non-lace / Lace, then sleeves, boots and a color. A modded Sciel outfit always needs a color (her default color pak is used when you pick none). '_only Lune mod_fix_P' is added when only Lune's outfit is modded - Sciel then shares Lune's outfit (author's note). '_only Separate colors_P' is added when only colors change on the vanilla outfit. Optional 'Thin Sciel' downloads: put their folders anywhere inside this mod's folder and a 'Sciel body' choice appears.",
+  "match": {
+    "paths": [
+      "Lace dress/Lune outfit",
+      "Non-Lace dress/Sciel color",
+      "Non-Lace dress/_only Separate colors_P"
+    ]
+  },
+  "choices": [
+    {
+      "id": "lune_dress",
+      "label": "Lune · dress",
+      "default": "nonlace",
+      "options": [
+        {
+          "value": "vanilla",
+          "label": "Vanilla Chic"
+        },
+        {
+          "value": "nonlace",
+          "label": "Non-lace"
+        },
+        {
+          "value": "lace",
+          "label": "Lace (semi-transparent)"
+        }
+      ]
+    },
+    {
+      "id": "lune_sleeves",
+      "label": "Lune · sleeves",
+      "show_if": "lune_dress != 'vanilla'",
+      "default": "sleeves",
+      "options": [
+        {
+          "value": "sleeves",
+          "label": "Sleeves"
+        },
+        {
+          "value": "sleeveless",
+          "label": "Sleeveless"
+        }
+      ]
+    },
+    {
+      "id": "lune_feet",
+      "label": "Lune · feet",
+      "show_if": "lune_dress != 'vanilla'",
+      "default": "boots",
+      "options": [
+        {
+          "value": "boots",
+          "label": "Boots"
+        },
+        {
+          "value": "barefoot",
+          "label": "Barefoot"
+        }
+      ]
+    },
+    {
+      "id": "sciel_dress",
+      "label": "Sciel · dress",
+      "default": "nonlace",
+      "options": [
+        {
+          "value": "vanilla",
+          "label": "No own mod"
+        },
+        {
+          "value": "nonlace",
+          "label": "Non-lace"
+        },
+        {
+          "value": "lace",
+          "label": "Lace (semi-transparent)"
+        }
+      ],
+      "help": "'No own mod' keeps the vanilla Chic dress - unless Lune is modded: then Sciel shares Lune's modded outfit (author's note), with the fix pak added automatically."
+    },
+    {
+      "id": "sciel_sleeves",
+      "label": "Sciel · sleeves",
+      "show_if": "sciel_dress != 'vanilla'",
+      "default": "sleeves",
+      "options": [
+        {
+          "value": "sleeves",
+          "label": "Sleeves"
+        },
+        {
+          "value": "sleeveless",
+          "label": "Sleeveless"
+        }
+      ]
+    },
+    {
+      "id": "sciel_feet",
+      "label": "Sciel · feet",
+      "show_if": "sciel_dress != 'vanilla'",
+      "default": "boots",
+      "options": [
+        {
+          "value": "boots",
+          "label": "Boots"
+        },
+        {
+          "value": "barefoot",
+          "label": "Barefoot"
+        }
+      ]
+    },
+    {
+      "id": "sciel_body",
+      "label": "Sciel · body",
+      "default": "normal",
+      "show_if": "sciel_sleeves == 'sleeveless' and sciel_feet == 'boots' and ((sciel_dress == 'lace' and thin_lace) or (sciel_dress == 'nonlace' and thin_nonlace))",
+      "help": "From the separate 'Thin Sciel' downloads on the mod page (only made for sleeveless + boots).",
+      "options": [
+        {
+          "value": "normal",
+          "label": "Normal"
+        },
+        {
+          "value": "thin",
+          "label": "Thin"
+        }
+      ]
+    },
+    {
+      "id": "lune_color",
+      "label": "Lune · color",
+      "show_if": "lune_dress != 'vanilla' or sciel_dress == 'vanilla'",
+      "help": "Lace colors only exist for the Lace dress. Colors on the vanilla outfit need Sciel vanilla too ('Separate colors' mode).",
+      "none_label": "Default color",
+      "default": "none",
+      "options_from": [
+        {
+          "when": "lune_dress == 'lace'",
+          "glob": "Lace dress/Lune color/*",
+          "label_regex": "chic_([^_]+)_P$"
+        },
+        {
+          "when": "lune_dress != 'lace'",
+          "glob": "Non-Lace dress/Lune color/*",
+          "label_regex": "chic_([^_]+)_P$"
+        }
+      ]
+    },
+    {
+      "id": "sciel_color",
+      "label": "Sciel · color",
+      "show_if": "sciel_dress != 'vanilla' or lune_dress == 'vanilla'",
+      "help": "A modded Sciel outfit always needs a color, so 'default' is used if you don't pick one.",
+      "none_label": "Default color",
+      "allow_none_if": "sciel_dress == 'vanilla'",
+      "default": "none",
+      "prefer_label": "default",
+      "options_from": [
+        {
+          "when": "sciel_dress == 'lace'",
+          "glob": "Lace dress/Sciel color/*",
+          "label_regex": "chic_([^_]+)_P$"
+        },
+        {
+          "when": "sciel_dress != 'lace'",
+          "glob": "Non-Lace dress/Sciel color/*",
+          "label_regex": "chic_([^_]+)_P$"
+        }
+      ]
+    }
+  ],
+  "paks": [
+    {
+      "when": "lune_dress == 'lace'",
+      "path": "Lace dress/Lune outfit/Lace_lune-{lune_sleeves}-{lune_feet}_P"
+    },
+    {
+      "when": "lune_dress == 'nonlace'",
+      "path": "Non-Lace dress/Lune outfit/chic_lune-{lune_sleeves}-{lune_feet}_P"
+    },
+    {
+      "when": "sciel_dress == 'lace' and sciel_body != 'thin'",
+      "path": "Lace dress/Sciel outfit/Lace_sciel-{sciel_sleeves}-{sciel_feet}_P"
+    },
+    {
+      "when": "sciel_dress == 'nonlace' and sciel_body != 'thin'",
+      "path": "Non-Lace dress/Sciel outfit/chic_sciel-{sciel_sleeves}-{sciel_feet}_P"
+    },
+    {
+      "when": "sciel_dress == 'lace' and sciel_body == 'thin'",
+      "find": "Lace_sciel-thin-{sciel_sleeves}-{sciel_feet}_P"
+    },
+    {
+      "when": "sciel_dress == 'nonlace' and sciel_body == 'thin'",
+      "find": "chic_sciel-thin-{sciel_sleeves}-{sciel_feet}_P"
+    },
+    {
+      "when": "lune_color != 'none'",
+      "path": "{lune_color}"
+    },
+    {
+      "when": "sciel_color != 'none'",
+      "path": "{sciel_color}"
+    },
+    {
+      "when": "lune_dress == 'lace' and sciel_dress == 'vanilla'",
+      "path": "Lace dress/_only Lune mod_fix_P",
+      "note": "Added '_only Lune mod_fix_P' (Lace): only Lune's outfit is modded."
+    },
+    {
+      "when": "lune_dress == 'nonlace' and sciel_dress == 'vanilla'",
+      "path": "Non-Lace dress/_only Lune mod_fix_P",
+      "note": "Added '_only Lune mod_fix_P' (Non-lace): only Lune's outfit is modded."
+    },
+    {
+      "when": "lune_dress == 'vanilla' and sciel_dress == 'vanilla' and (lune_color != 'none' or sciel_color != 'none')",
+      "path": "Non-Lace dress/_only Separate colors_P",
+      "note": "Added '_only Separate colors_P': colors only, on the vanilla outfit."
+    },
+    {
+      "when": "lune_dress == 'vanilla' and sciel_dress == 'vanilla' and lune_color != 'none' and sciel_color == 'none'",
+      "path": "Non-Lace dress/Sciel color/Sciel_chic_default_P",
+      "note": "Added Sciel's default color: the Separate colors mode needs a color for both characters."
+    }
+  ],
+  "checks": [],
+  "flags": {
+    "thin_lace": "Lace_sciel-thin-sleeveless-boots_P",
+    "thin_nonlace": "chic_sciel-thin-sleeveless-boots_P"
+  }
+}
