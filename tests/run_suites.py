@@ -9,6 +9,9 @@ fixtures that can't be shipped (see docs/DEVELOPMENT.md); they run only when the
   E33_E2E_PAKS, E33_E2E_BASE                test_relocate_e2e.py: fake Paks dir, base legacy dir
   E33_PREVIEW_GLOBAL, E33_PREVIEW_LEGACY    test_previews.py: script objects dir, texture legacy dir
   E33_RELOC_SRC                             test_relocation.py: a legacy package tree to relocate
+
+test_app_backend.py always runs; with E33_E2E_PAKS, E33_E2E_BASE and E33_RETOC set it also runs a full
+add job through the app's Api, and E33_SAMPLE_MOD (option folders of a real outfit mod) checks sorting.
 """
 import importlib.util
 import os
@@ -19,8 +22,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 LUA = ['test_lua_mock', 'test_lua_mock_real', 'test_lua_switching', 'test_lua_coverage',
        'test_lua_dispatch', 'test_lua_menu', 'test_lua_outfit_whole', 'test_lua_clean']
-PLAIN = ['test_mixer']
+PLAIN = ['test_mixer', 'test_app_monitor', 'test_app_backend']
 DATA = {
+    'test_app_ui': ('E33_E2E_PAKS', 'E33_RETOC', 'E33_SAMPLE_ARCHIVES'),
     'test_relocate_e2e': ('E33_E2E_PAKS', 'E33_E2E_BASE', 'E33_RETOC'),
     'test_previews': ('E33_PREVIEW_GLOBAL', 'E33_PREVIEW_LEGACY', 'E33_RETOC'),
     'test_relocation': ('E33_RELOC_SRC', 'E33_RETOC'),

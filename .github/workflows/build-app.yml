@@ -1,0 +1,69 @@
+name: Build app
+
+# Builds "E33 Wardrobe.exe" (plus the Lua and Tools zips) on Windows. On a tag like v1.2.0 the
+# files are attached to that GitHub release; otherwise they are kept as workflow artifacts.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip pyinstaller pywebview py7zr lupa
+
+      - name: Get retoc 0.1.5
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Invoke-WebRequest https://github.com/trumank/retoc/releases/download/v0.1.5/retoc_cli-x86_64-pc-windows-msvc.zip -OutFile retoc.zip
+          $hash = (Get-FileHash retoc.zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne 'cc036b06ad3bdcf7003690b00d82719980c374e48a95bf0654f9959148d263aa') { throw "retoc checksum mismatch: $hash" }
+          Expand-Archive retoc.zip -DestinationPath retoc_tmp
+          Copy-Item (Get-ChildItem retoc_tmp -Recurse -Filter retoc.exe | Select-Object -First 1).FullName bin\retoc.exe
+
+      - name: Get 7-Zip (for RAR archives)
+        shell: pwsh
+        run: |
+          Copy-Item 'C:\Program Files\7-Zip\7z.exe', 'C:\Program Files\7-Zip\7z.dll' bin\
+          Copy-Item 'C:\Program Files\7-Zip\License.txt' bin\7-Zip-License.txt
+
+      - name: Tests
+        env:
+          PYTHONUTF8: '1'
+        run: python tests/run_suites.py
+
+      - name: Build the app
+        env:
+          E33_REQUIRE_BIN: '1'
+        run: pyinstaller --noconfirm --distpath dist_app --workpath build_app app/e33wardrobe.spec
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = (python -c "import sys; sys.path.insert(0, 'tools'); import e33common; print(e33common.VERSION)").Trim()
+          python scripts/build_release.py
+          Compress-Archive -Path 'dist_app\E33 Wardrobe' -DestinationPath "dist\E33Wardrobe-App-$v.zip"
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e33wardrobe
+          path: dist/*.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip

@@ -5,6 +5,7 @@ itself is in [HOW_IT_WORKS.md](HOW_IT_WORKS.md); the research behind it in
 [RESEARCH.md](RESEARCH.md).
 
 - [Layout](#layout)
+- [The app](#the-app)
 - [Running the tests](#running-the-tests)
 - [What the tests cover](#what-the-tests-cover)
 - [Rules for the Lua mod](#rules-for-the-lua-mod)
@@ -28,6 +29,31 @@ itself is in [HOW_IT_WORKS.md](HOW_IT_WORKS.md); the research behind it in
 | `tests/` | Test suites (scripts that print `PASS` / `FAIL`), `run_suites.py` runs them all |
 | `research/usmap.py` | Reader for `.usmap` mappings, used during research |
 | `scripts/build_release.py` | Builds the release zips into `dist/` |
+| `app/e33app.py` | The app: a pywebview window around `app/ui`, or `--dev PORT` for an HTTP bridge |
+| `app/ui/` | The app's interface (plain HTML/CSS/JS); `mock.js` is a fake backend for screenshots |
+| `app/backend/` | The app's backend: `api.py` (every method the page calls), `paths.py` (game, UE4SS, bundled files), `archives.py` (unpacking, Nexus file names), `library.py` (sorting by outfit, mod details), `jobs.py` (the task queue; runs the relocator in-process), `monitor.py` (the Game log tab) |
+| `app/API.md` | The contract between the page and the backend |
+| `app/e33wardrobe.spec`, `.github/workflows/build-app.yml` | The Windows build (PyInstaller, on GitHub Actions) |
+| `scripts/render_app.py` | Screenshots of the app's screens from `mock.js` |
+
+## The app
+
+```
+pip install -r requirements-dev.txt
+python app/e33app.py              # the window (Windows: Edge WebView2)
+python app/e33app.py --dev 8765   # no window: open http://127.0.0.1:8765/index.html in a browser
+```
+
+`--dev` serves `app/ui` and answers `POST /api/<method>` with the same `Api` object the window
+uses, so the real page and backend can run in any browser or Playwright (`tests/test_app_ui.py`).
+File dialogs aren't available there; drops go through `window.e33.devDrop([paths])`.
+`python scripts/render_app.py out/` renders the screens from `mock.js` without a backend.
+
+The Windows build runs on GitHub Actions (`build-app.yml`, on a `v*` tag or by hand). It downloads
+retoc 0.1.5 (checksum pinned), copies 7-Zip from the runner, runs the tests, builds with
+PyInstaller and attaches `E33Wardrobe-App-<version>.zip` plus the Lua and Tools zips to the release.
+To build locally on Windows: put `retoc.exe`, `7z.exe` and `7z.dll` into `bin\`, then
+`pyinstaller --noconfirm app/e33wardrobe.spec`.
 
 ## Running the tests
 
@@ -49,6 +75,7 @@ unless these environment variables point at fixtures you build yourself:
 | `test_relocate_e2e.py` | `E33_E2E_PAKS`, `E33_E2E_BASE`, `E33_RETOC` | A fake game: `global.utoc` from `retoc gen-script-objects`, plus a base container built from a legacy tree with `Environment/SM_BlueCube`, `Materials/MI_BlueCube`, `Materials/M_Cube`. The suite builds its own mod library from it, relocates it and checks every import with retoc. See the file's docstring |
 | `test_previews.py` | `E33_PREVIEW_GLOBAL`, `E33_PREVIEW_LEGACY`, `E33_RETOC` | Script objects that include `Texture2D`, and cooked textures in legacy form |
 | `test_relocation.py` | `E33_RELOC_SRC`, `E33_RETOC` | A legacy package tree to relocate and read back |
+| `test_app_ui.py` | `E33_E2E_PAKS`, `E33_RETOC`, `E33_SAMPLE_ARCHIVES` | The fake game's Paks, and a folder with a few downloads of one outfit mod; needs Playwright |
 
 ## Previewing the menu
 
@@ -78,6 +105,10 @@ crowded rows, cut text and highlights, not for exact pixels.
   - `test_lua_clean.py`: Clean, including object address reuse and level changes.
   - `test_lua_dispatch.py`: the threading model, and refusing to start on old UE4SS builds.
   - `test_lua_menu.py`: the menu, driven by keys and clicks.
+- **App suites**: `test_app_backend.py` (game detection, unpacking, Nexus names, sorting by outfit,
+  a full add/remove job against the fake game), `test_app_monitor.py` (log rules, sessions,
+  truncation, crash detection), `test_app_ui.py` (the real page and backend in Chromium: setup,
+  installing the menu, dropping downloads, details, removing).
 - **`test_mixer.py`**: the Mixer on a fake library (`make_fake_library.py`): rules, apply,
   pending changes, atomic copies, refusing wrong folders.
 - **`test_relocate_e2e.py`**: the relocator end to end (see above).
@@ -148,3 +179,4 @@ sides and the tests in the same commit.
 4. `python scripts/build_release.py` writes `dist/E33Wardrobe-Lua-<version>.zip` (the UE4SS mod,
    root `E33Wardrobe/`, without `variants.lua`) and `dist/E33Wardrobe-Tools-<version>.zip`.
    `--with-rules` adds `tools/rules/`.
+5. Push a tag `v<version>`: GitHub Actions builds the app and attaches all zips to the release.

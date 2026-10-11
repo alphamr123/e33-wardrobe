@@ -1,3 +1,7 @@
-# For running the tests (python tests/run_suites.py, or pytest). The tools themselves need only Python 3.8+.
+# For running the tests (python tests/run_suites.py, or pytest) and the app from the repository.
+# The command-line tools themselves need only Python 3.8+.
 lupa>=2.0
 pytest>=7
+py7zr>=0.20          # 7z archives in the app
+pywebview>=5.0       # the app window (python app/e33app.py)
+playwright>=1.40     # optional: tests/test_app_ui.py drives the app in Chromium

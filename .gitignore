@@ -72,3 +72,8 @@ UE4SS.log
 *.7z
 *.rar
 tools/e33wardrobe_config.json
+
+# App build (PyInstaller) and its downloaded helpers
+/bin/
+/dist_app/
+/build_app/

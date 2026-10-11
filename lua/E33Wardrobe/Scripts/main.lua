@@ -22,7 +22,7 @@ Nothing is queued to the game thread from another thread (see "threading" below)
 ]]
 
 local MOD = "E33Wardrobe"
-local VERSION = "1.1.0"                         -- the same as tools/e33common.py VERSION
+local VERSION = "1.2.0"                         -- the same as tools/e33common.py VERSION
 local KEYS = {
     menu = { "DEL", {} },
     menuUp = { "UP_ARROW", { "CONTROL" } }, menuDown = { "DOWN_ARROW", { "CONTROL" } },
@@ -987,24 +987,54 @@ local function namedLike(active, before)
     end
     return best and loadObj(best.pkg, best.obj) or nil
 end
+-- An unused texture of the picked variants that fits the parameter by name (PC: Sciel's Cheeki
+-- body uses Lune's material, whose Color_MAIN is empty; the mod ships body_high_BaseColor-nude for
+-- it, which nothing uses). Words of the parameter must be in the texture name; "body" counts in
+-- favour, words the parameter doesn't have (underwear, bikini) against.
+local KIND_WORDS = { color = "color", colour = "color", albedo = "color", diffuse = "color", normal = "normal",
+                     roughness = "roughness", orm = "roughness", cavity = "cavity", emissive = "emissive",
+                     glow = "emissive", underwear = "underwear", btls = "btls" }
+local function byKind(active, param)
+    local want = {}
+    local words = param:gsub("(%l)(%u)", "%1 %2"):lower():gsub("basecolou?r", "color")
+    for w in words:gmatch("%a+") do if KIND_WORDS[w] then want[KIND_WORDS[w]] = true end end
+    if not next(want) then return nil end
+    local best, bestScore
+    for orig, e in pairs(active or {}) do
+        if e.class == "Texture2D" and not appliedBy(orig, e.vid) then
+            local leaf = (orig:match("[^/]+$") or ""):gsub("basecolou?r", "color"):gsub("albedo", "color")
+            local ok, score = true, 0
+            for w in pairs(want) do if not leaf:find(w, 1, true) then ok = false end end
+            if ok then
+                if leaf:find("body", 1, true) then score = score + 2 end
+                for _, w in ipairs({ "underwear", "bikini", "btls" }) do
+                    if leaf:find(w, 1, true) and not want[w] then score = score - 3 end
+                end
+                if not bestScore or score > bestScore then best, bestScore = e, score end
+            end
+        end
+    end
+    return best and loadObj(best.pkg, best.obj) or nil
+end
 Wear.fillEmpty = function(actor, comp, char, n, active)
-    local d = char and Wear.donor[char]
-    if not d then return end
+    local d = (char and Wear.donor[char]) or {}
     for i = 0, (n or 0) - 1 do
         local okm, m = pcall(function() return comp:GetMaterial(i) end)
         if okm and valid(m) then
             local mid
             for key, tp in pairs(textureParams(m)) do
                 local name = key:match("^[^|]*")
-                if not valid(tp.tex) and valid(d[name]) then      -- an empty link reads as an invalid object
-                    local own = namedLike(active, d[name])
+                if not valid(tp.tex) then                         -- an empty link reads as an invalid object
+                    local own = (valid(d[name]) and namedLike(active, d[name])) or byKind(active, name)
                     local tex = own or d[name]
+                    if not valid(tex) then goto continue end
                     mid = mid or (isMID(m) and m or makeMID(actor, comp, i, m, nil))
                     if not mid then break end
                     setTexture(mid, tp.info, tex)
                     change("mat%d texture %s: empty (the mod's material points at a texture it doesn't have) -> %s%s",
-                        i, name, pkgPath(tex) or "?", own and " (the mod's own, named like it)" or " (what the body showed before)")
+                        i, name, pkgPath(tex) or "?", own and " (the mod's own texture for it)" or " (what the body showed before)")
                 end
+                ::continue::
             end
         end
     end

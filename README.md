@@ -15,22 +15,22 @@ while you play.
   - **Favorites:** save looks per character and order them.
   - **Clean:** removes blood and dirt from all characters. No files changed.
   - **Fix look**, presets, undo, randomize.
-- **Relocator** (Python): prepares outfit mods for the menu. Drag a mod folder onto
-  `E33 Relocate.bat`.
+- **App** (`E33 Wardrobe.exe`): finds the game, installs the in-game menu, and prepares outfit
+  mods for it: drop the downloads on the window. Shows what each mod changes, and follows the
+  game's logs while you play.
+- **Command-line tools** (Python), for those who prefer them: the relocator the app uses.
 
 ## Install
 
-Short version:
-
 1. Install [UE4SS](https://www.nexusmods.com/clairobscurexpedition33/mods/630), file
    "UE4SS - Experimental (Newer)".
-2. Install the menu (Vortex, or extract into `...\Binaries\Win64\ue4ss\Mods\`).
-3. For outfit switching: get the tools zip from
-   [Releases](https://github.com/alphamr123/e33-wardrobe/releases), install Python and put
-   [retoc](https://github.com/trumank/retoc/releases) in `tools\`. Put each outfit mod in its own
-   folder in `Sandfall\Content\Paks_ModLibrary\` and drag that folder onto `E33 Relocate.bat`.
+2. Download `E33Wardrobe-App-<version>.zip` from
+   [Releases](https://github.com/alphamr123/e33-wardrobe/releases), extract it and run
+   `E33 Wardrobe.exe`. The Setup tab finds the game and installs the in-game menu.
+3. Drop outfit mod downloads (zip, 7z, rar) on the window. Start the game and press Delete.
 
-Full steps: [docs/INSTALL.md](docs/INSTALL.md).
+App guide: [docs/APP.md](docs/APP.md). Without the app (Vortex, command line):
+[docs/INSTALL.md](docs/INSTALL.md).
 
 ## Keys
 
@@ -44,7 +44,8 @@ To change keys, copy `Scripts\config.example.lua` to `config.lua` and edit it.
 
 ## Documentation
 
-- [INSTALL.md](docs/INSTALL.md): installing, updating, uninstalling
+- [APP.md](docs/APP.md): the app
+- [INSTALL.md](docs/INSTALL.md): installing without the app, updating, uninstalling
 - [USAGE.md](docs/USAGE.md): the menu in detail, settings, console commands
 - [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): common problems, freezes, reporting a bug
 - [RELOCATOR.md](docs/RELOCATOR.md): the relocator and its options

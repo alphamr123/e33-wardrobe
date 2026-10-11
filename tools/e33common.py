@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 GAME_EXES = ('SandFall-Win64-Shipping.exe', 'SandFall-WinGDK-Shipping.exe')   # Steam, Game Pass
 
 _RUNNING = {'t': 0.0, 'v': False}

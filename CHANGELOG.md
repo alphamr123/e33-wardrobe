@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0
+
+- **App** (`E33 Wardrobe.exe`, on GitHub Releases): finds the game (or asks for the folder),
+  checks UE4SS, installs the in-game menu, and prepares mods dropped on the window (zip, 7z, rar,
+  folders). Several downloads of one Nexus mod become one mod; options are sorted into one menu row
+  per outfit. Shows each mod's rows, options, texture sizes, skin textures, notes and overlaps.
+  The Game log tab reads the game's logs while it runs and lists problems.
+- Relocator: records texture sizes and saves small colour swatches for the app; retoc runs without
+  console windows.
+- In-game menu: an empty texture link is filled with a texture of the mod that fits the parameter
+  (for mods whose material borrows another option's), before falling back to the previous one.
+
 ## 1.1.0
 
 - **Favorites**: saved looks per character, in your own order (Favorites on the "wears" row; Save look,

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E33 Wardrobe</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- Toolbar -->
+  <div class="toolbar" role="toolbar">
+    <button class="btn tb" data-act="add-files" title="Add mod archives (zip, 7z, rar)">Add mods...</button>
+    <button class="btn tb" data-act="add-folder" title="Add a mod that is already unpacked">Add folder...</button>
+    <span class="tb-sep"></span>
+    <button class="btn tb" data-act="reinstall" data-needs-mod title="Prepare the selected mod again">Reinstall</button>
+    <button class="btn tb" data-act="remove" data-needs-mod title="Remove the selected mod (Delete)">Remove</button>
+    <span class="tb-sep"></span>
+    <button class="btn tb" data-act="open-library" title="Open the mod library in Explorer">Open mods folder</button>
+    <span class="tb-fill"></span>
+    <button class="btn tb" data-act="help">Help</button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabstrip" role="tablist">
+    <button class="tab active" data-tab="mods" role="tab">Mods</button>
+    <button class="tab" data-tab="log" role="tab">Game log</button>
+    <button class="tab" data-tab="setup" role="tab">Setup</button>
+  </div>
+
+  <div class="tabpages">
+
+    <!-- ================= Mods ================= -->
+    <section class="page active" id="page-mods">
+      <div class="notice" id="mods-notice" hidden></div>
+      <div class="split" id="mods-split">
+        <div class="pane pane-left" id="mods-left">
+          <div class="lv" id="modlist" tabindex="0">
+            <table>
+              <colgroup>
+                <col class="c-mod"><col class="c-chars"><col class="c-repl">
+                <col class="c-opts"><col class="c-size"><col class="c-state">
+              </colgroup>
+              <thead><tr>
+                <th data-sort="name">Mod</th>
+                <th data-sort="characters">Characters</th>
+                <th data-sort="replaces">Replaces</th>
+                <th data-sort="options" class="num">Options</th>
+                <th data-sort="size" class="num">Size</th>
+                <th data-sort="state" title="Status"><span class="st-text">Status</span></th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+            <div class="lv-empty" id="modlist-empty" hidden></div>
+          </div>
+        </div>
+        <div class="splitter-v" id="mods-splitter" title="Drag to resize"></div>
+        <div class="pane pane-right" id="details">
+          <div class="details-scroll" id="details-body"></div>
+          <div class="buttonbar" id="details-buttons">
+            <button class="btn" data-act="reinstall" data-needs-mod id="btn-reinstall">Reinstall</button>
+            <button class="btn" data-act="remove" data-needs-mod>Remove...</button>
+            <button class="btn" data-act="open-mod" data-needs-mod>Open folder</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="splitter-h" id="tasks-splitter" hidden title="Drag to resize"></div>
+      <div class="dock" id="tasks" hidden>
+        <div class="dock-title">
+          <span>Tasks</span><span class="dock-count" id="tasks-count"></span>
+          <span class="tb-fill"></span>
+          <button class="btn small" data-act="clear-finished" id="btn-clear">Clear finished</button>
+        </div>
+        <div class="lv" id="tasklist">
+          <table>
+            <colgroup>
+              <col class="c-tname"><col class="c-tkind"><col class="c-tsize">
+              <col class="c-tstep"><col class="c-tprog"><col class="c-tstat">
+            </colgroup>
+            <thead><tr>
+              <th>Name</th><th>Task</th><th class="num">Size</th><th>Step</th><th>Progress</th><th>Status</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Game log ================= -->
+    <section class="page" id="page-log">
+      <div class="infobar">
+        <span class="ico" id="log-ico"></span>
+        <span class="infobar-text" id="log-status">Reading the game's logs...</span>
+        <span class="tb-fill"></span>
+        <button class="btn" data-act="copy-problems">Copy problems</button>
+        <button class="btn" data-act="open-report">Open report.txt</button>
+        <button class="btn" data-act="open-logs">Open log folder</button>
+      </div>
+
+      <div class="log-top">
+        <fieldset class="gb gb-fill" id="gb-problems">
+          <legend>Problems</legend>
+          <div class="lv lv-grow" id="problemlist" tabindex="0">
+            <table>
+              <colgroup><col class="c-sev"><col class="c-time"><col class="c-ptitle"><col class="c-count"></colgroup>
+              <thead><tr><th></th><th>Time</th><th>Problem</th><th class="num">Count</th></tr></thead>
+              <tbody></tbody>
+            </table>
+            <div class="lv-empty" id="problems-empty" hidden>No problems found.</div>
+          </div>
+          <div class="problem-detail sunken" id="problem-detail"></div>
+        </fieldset>
+
+        <fieldset class="gb gb-fill" id="gb-onscreen">
+          <legend>On screen now</legend>
+          <div class="lv lv-grow" id="onscreenlist">
+            <table>
+              <colgroup><col class="c-slot"><col class="c-variant"><col class="c-shown"><col class="c-worn"></colgroup>
+              <thead><tr><th>Slot</th><th>Variant</th><th class="num">Shown</th><th>Worn</th></tr></thead>
+              <tbody></tbody>
+            </table>
+            <div class="lv-empty" id="onscreen-empty" hidden>Nothing from your mods on screen.</div>
+          </div>
+        </fieldset>
+      </div>
+
+      <fieldset class="gb gb-fill log-bottom">
+        <legend>Session log</legend>
+        <div class="row-controls">
+          <label for="log-filter">Filter:</label>
+          <input type="text" id="log-filter" class="field" spellcheck="false" autocomplete="off">
+          <label class="check"><input type="checkbox" id="log-autoscroll" checked> Auto-scroll</label>
+          <span class="tb-fill"></span>
+          <span class="muted" id="log-count"></span>
+        </div>
+        <pre class="logview sunken" id="logview" tabindex="0"></pre>
+      </fieldset>
+    </section>
+
+    <!-- ================= Setup ================= -->
+    <section class="page" id="page-setup">
+      <div class="setup-cols">
+        <div class="setup-col">
+          <fieldset class="gb" id="gb-game"><legend>Game</legend><div id="setup-game"></div></fieldset>
+          <fieldset class="gb" id="gb-library"><legend>Mod library</legend><div id="setup-library"></div></fieldset>
+          <fieldset class="gb" id="gb-tools"><legend>Tools</legend><div id="setup-tools"></div></fieldset>
+        </div>
+        <div class="setup-col">
+          <fieldset class="gb" id="gb-ue4ss"><legend>UE4SS</legend><div id="setup-ue4ss"></div></fieldset>
+          <fieldset class="gb" id="gb-menu"><legend>In-game menu</legend><div id="setup-menu"></div></fieldset>
+          <fieldset class="gb" id="gb-app"><legend>App</legend><div id="setup-app"></div></fieldset>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Status bar -->
+  <div class="statusbar">
+    <span class="sb sb-msg" id="sb-msg">Starting...</span>
+    <span class="sb" id="sb-game"></span>
+    <span class="sb" id="sb-ue4ss"></span>
+    <span class="sb" id="sb-menu"></span>
+    <span class="sb" id="sb-mods"></span>
+    <span class="sb" id="sb-running"></span>
+    <span class="grip"></span>
+  </div>
+</div>
+
+<div id="drop-overlay" hidden>
+  <div class="drop-box">
+    <div class="drop-title">Drop to add</div>
+    <div class="drop-sub" id="drop-sub">zip, 7z or rar archives, or mod folders</div>
+  </div>
+</div>
+<div id="ctxmenu" class="ctxmenu" hidden></div>
+<div id="modal-layer" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

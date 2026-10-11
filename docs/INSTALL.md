@@ -1,6 +1,11 @@
 # Installation
 
-There are two parts. Install part 1 first; part 2 is only needed for outfit switching.
+**Easiest: use the app.** Install UE4SS, then run `E33 Wardrobe.exe` from the
+[releases page](https://github.com/alphamr123/e33-wardrobe/releases); it installs the menu and
+prepares your mods. See [APP.md](APP.md).
+
+Without the app there are two parts. Install part 1 first; part 2 is only needed for outfit
+switching.
 
 1. [The in-game menu](#1-the-in-game-menu) (UE4SS mod): menu, Clean, Fix look.
 2. [The tools](#2-the-tools) (Python): prepare outfit mods for switching in game.
@@ -27,6 +32,8 @@ console window closed while playing.
 If Delete does nothing, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## 2. The tools
+
+(Not needed with the app, which includes them.)
 
 **You need:**
 - [Python 3.8 or newer](https://www.python.org/downloads/). In the installer, tick

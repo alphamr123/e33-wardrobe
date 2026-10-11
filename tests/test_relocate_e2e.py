@@ -83,6 +83,22 @@ def main():
     lr2 = os.path.join(tmp, 'leg_r2')
     legacy_copy(lr2, ['/Game/Materials/MI_BlueCube'], b'BLUE_COLORMARK')
     pack(lr2, os.path.join(lib, 'Lune color', 'Blue_P'), 'Blue_P')
+    # Tex_P: a material and a texture (the fake game's Texture2D), for texture sizes and swatches
+    tex_pkg, tex_swatch = None, ''
+    for dp, _ds, fs in sorted(os.walk(os.path.join(base, 'Sandfall', 'Content'))):
+        for f in sorted(fs):
+            if f.endswith('.uasset') and tex_pkg is None:
+                try:
+                    if L.read_package_info(os.path.join(dp, f))['main_class'] == 'Texture2D':
+                        tex_pkg = L.rel_to_package(os.path.relpath(os.path.join(dp, f), base).replace(os.sep, '/'))[0]
+                except Exception:
+                    pass
+    if tex_pkg:
+        lt = os.path.join(tmp, 'leg_tex')
+        legacy_copy(lt, ['/Game/Materials/MI_BlueCube', tex_pkg])
+        pack(lt, os.path.join(lib, 'Lune color', 'Tex_P'), 'Tex_P')
+    else:
+        print('SKIP texture size / swatch checks: the base legacy dir has no Texture2D')
 
     # Flat_P: a pak whose file index has no folders (as some outfit mods' paks do). It overrides
     # MI_BlueCube and adds a mod-only material at /Game/ModFlat/MI_FlatOnly (same length trick).
@@ -180,6 +196,27 @@ def main():
     # variants.lua flags mod-only assets (4th field false) so the Lua never treats them as vanilla
     check('variants.lua marks mod-only assets', '"MaterialInstanceConstant", false }' in lua_txt)
 
+    # textures: size and pixel format in the report; small swatch PNGs next to the paks (for the app)
+    if tex_pkg:
+        import e33tex
+        vt = rep.get('TestMod/Lune color/Tex_P', {})
+        c = vt.get('classes', {}).get(tex_pkg, {})
+        want = e33tex.parse_texture(os.path.join(base, *L.package_to_rel(tex_pkg).split('/')))
+        check('texture width, height and pixel format recorded in the report',
+              (c.get('width'), c.get('height'), c.get('format')) == (want['width'], want['height'], want['format']), c)
+        sw = vt.get('swatches') or []
+        tex_swatch = sw[0] if sw else 'missing.png'
+        png = os.path.join(out, 'TestMod', 'swatches', sw[0]) if sw else ''
+        data = open(png, 'rb').read() if png and os.path.isfile(png) else b''
+        import struct
+        dims = struct.unpack('>II', data[16:24]) if len(data) > 24 else (0, 0)
+        check('a swatch PNG (<= 64 px) is written for the variant with a texture', len(sw) == 1 and
+              data.startswith(b'\x89PNG') and 0 < max(dims) <= 64 and sw[0] == os.path.basename(vt['output'])[:-5] + '_1.png',
+              (sw, dims))
+        check('  and the report names its texture', vt.get('swatch_textures') == [tex_pkg], vt.get('swatch_textures'))
+        check('  variants without textures list no swatches', rep.get('TestMod/Lune color/Red_P', {}).get('swatches') == [],
+              rep.get('TestMod/Lune color/Red_P', {}).get('swatches'))
+
     # --only: the shared pak is rebuilt from ALL of the mod's containers, not just the selected one
     rc, log2 = run([sys.executable, '-I', os.path.join(TOOLS, 'e33_relocate.py'), '--retoc', retoc, '--paks', paks,
                     '--mod', lib, '--out', out, '--lua-dir', lua, '--work', tmp, '--only', 'Red_P'])
@@ -193,9 +230,15 @@ def main():
     # stale outputs from removed variants are pruned on a full run
     stale = os.path.join(out, 'TestMod', 'Gone_P.utoc')
     open(stale, 'wb').write(b'x')
+    os.makedirs(os.path.join(out, 'TestMod', 'swatches'), exist_ok=True)
+    stale_sw = os.path.join(out, 'TestMod', 'swatches', 'Gone_P_1.png')
+    open(stale_sw, 'wb').write(b'x')
     rc, _ = run([sys.executable, '-I', os.path.join(TOOLS, 'e33_relocate.py'), '--retoc', retoc, '--paks', paks,
                  '--mod', lib, '--out', out, '--lua-dir', lua, '--work', tmp])
     check('stale output pruned on a full run', not os.path.exists(stale))
+    check('  and its swatches too, while current ones stay', not os.path.exists(stale_sw) and
+          (not tex_pkg or os.path.isfile(os.path.join(out, 'TestMod', 'swatches', tex_swatch))),
+          os.listdir(os.path.join(out, 'TestMod', 'swatches')))
 
     # an import nothing provides (kept with a note), and a pak built for another engine version (refused)
     lib2 = os.path.join(tmp, 'Lib2', 'BadMod')

@@ -38,16 +38,19 @@ sys.path.insert(0, HERE)
 import e33common  # noqa: E402
 import e33legacy  # noqa: E402
 import e33rules  # noqa: E402
+import e33tex  # noqa: E402
 import e33utoc  # noqa: E402
 
 ENGINE = 'UE5_4'
-LUA_TEMPLATE = os.path.join(os.path.dirname(HERE), 'lua', 'E33Wardrobe')
+LUA_TEMPLATE = os.environ.get('E33_LUA_TEMPLATE') or os.path.join(os.path.dirname(HERE), 'lua', 'E33Wardrobe')
 TOC_VERSIONS = ['Invalid', 'Initial', 'DirectoryIndex', 'PartitionSize', 'PerfectHash', 'PerfectHashWithOverflow',
                 'OnDemandMetaData', 'RemovedOnDemandMetaData', 'ReplaceIoChunkHashWithIoHash']
 CHARACTERS = ['Lune', 'Sciel', 'Maelle', 'Verso', 'Monoco', 'Gustave']
 BULK_EXTS = ('.ubulk', '.uptnl', '.m.ubulk')
 FILTER_CHARS = 20000                  # stay well under the Windows 32k command-line limit
 TESTED_RETOC = '0.1.5'                # uses its --no-compres-shaders spelling
+NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0   # no console flashing up from a windowed app
+SWATCHES, SWATCH_PX = 2, 64           # small colour swatches per variant, for the app (<out>/<mod>/swatches)
 # Paths on this PC (paks_dir, library, retoc): saved with --save. The Mixer's settings file is read
 # when this one doesn't exist yet. E33_CONFIG points the tests elsewhere.
 CONFIG_PATH = os.environ.get('E33_CONFIG') or os.path.join(HERE, 'e33wardrobe_config.json')
@@ -69,7 +72,8 @@ class RetocError(RuntimeError):
 
 def run(cmd, log):
     log.write('> ' + ' '.join(f'"{c}"' if ' ' in c else c for c in cmd) + '\n')
-    p = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+    p = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace',
+                       stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
     out = p.stdout + p.stderr
     log.write(out + '\n')
     if p.returncode != 0:
@@ -171,7 +175,7 @@ def install_lua(template, lua_dir):
 def retoc_version(retoc):
     try:
         out = subprocess.run([retoc, '--version'], capture_output=True, text=True, encoding='utf-8',
-                             errors='replace', timeout=30)
+                             errors='replace', timeout=30, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
         m = re.search(r'(\d+\.\d+\.\d+)', out.stdout + out.stderr)
         return m.group(1) if m else None
     except (OSError, subprocess.SubprocessError):
@@ -570,6 +574,56 @@ def _shader_chunk(variant_id, taken):
     return n
 
 
+def texture_info(base, entry, candidates):
+    """Record an extracted texture's size and pixel format in its classes entry, and list it as a
+    swatch candidate if it looks like a base-colour texture. Never fails (header reads only)."""
+    try:
+        tex = e33tex.parse_texture(base)
+        fmt = tex['vt']['layer_types'][0] if tex['vt'] and not tex['mips'] else tex['format']
+        entry.update(width=tex['width'], height=tex['height'], format=fmt)
+        score = e33tex.color_score(entry.get('object') or os.path.basename(base), fmt)
+        if score >= 0:
+            candidates.append((-score, base))
+    except Exception:
+        pass
+
+
+def write_swatches(candidates, packages_by_base, out_dir, stem):
+    """Up to SWATCHES small PNGs (SWATCH_PX) of the best base-colour candidates, from a small mip
+    only; a texture whose smallest mip is still large is skipped. Returns (file names, packages)."""
+    d = os.path.join(out_dir, 'swatches')
+    names, pkgs = [], []
+    for _score, base in sorted(candidates)[:SWATCHES + 2]:
+        if len(names) >= SWATCHES:
+            break
+        try:
+            tex = e33tex.parse_texture(base)
+            if tex['vt'] is None:
+                sizes = [max(w, h) for w, h, desc in tex['mips'] if tex['bulk'].payload(desc)]
+                if not sizes or min(sizes) > 1024:
+                    continue
+            _fmt, w, h, px = e33tex.decode_texture(base, 192)
+            w, h, px = e33tex.downscale(w, h, px, SWATCH_PX)
+            os.makedirs(d, exist_ok=True)
+            name = f'{stem}_{len(names) + 1}.png'
+            with open(os.path.join(d, name + '.tmp'), 'wb') as f:
+                f.write(e33tex.png_bytes(w, h, px))
+            os.replace(os.path.join(d, name + '.tmp'), os.path.join(d, name))
+            names.append(name)
+            pkgs.append(packages_by_base.get(base))
+        except Exception:
+            continue
+    if os.path.isdir(d):                               # fewer swatches than an earlier build
+        for f in os.listdir(d):
+            m = re.fullmatch(re.escape(stem) + r'_(\d+)\.png', f)
+            if m and f not in names:
+                try:
+                    os.remove(os.path.join(d, f))
+                except OSError:
+                    pass
+    return names, pkgs
+
+
 def relocate_variant(retoc, game_links, mod_root, rel, work, out_dir, variant_id, log, ctx, from_legacy=None):
     """ctx: dict(used=set, game_pkgs=set, game_version=int|None, skeletons=str, physics=str, chunks=set)."""
     src_dir = os.path.join(mod_root, *rel.split('/')) if rel else mod_root
@@ -641,6 +695,7 @@ def relocate_variant(retoc, game_links, mod_root, rel, work, out_dir, variant_id
 
     # Inspect what was extracted.
     classes, unresolved = {}, {}
+    swatch_cands, tex_pkgs = [], {}
     for p in packages:
         ua = os.path.join(legacy, *e33legacy.package_to_rel(p).split('/')) + '.uasset'
         try:
@@ -650,6 +705,9 @@ def relocate_variant(retoc, game_links, mod_root, rel, work, out_dir, variant_id
             n = sum(1 for x in info['imported_packages'] if x.startswith('/Engine/UnknownPackage'))
             if n:
                 unresolved[p] = n
+            if (info['main_class'] or '').startswith('Texture2D'):
+                tex_pkgs[ua[:-7]] = p
+                texture_info(ua[:-7], classes[p], swatch_cands)
         except FileNotFoundError:
             classes[p] = {'class': None, 'error': 'not extracted (see relocate_log.txt)'}
         except Exception as e:      # malformed or unexpected layout: report
@@ -716,9 +774,11 @@ def relocate_variant(retoc, game_links, mod_root, rel, work, out_dir, variant_id
         notes.append(f'has its own shaders: packed as pakchunk{chunk}')
     stem = f'pakchunk{chunk}-Windows_P' if chunk else variant_stem(variant_id, ctx['stems'])
     out_utoc = publish(retoc, renamed, work, out_dir, stem, log)
+    swatches, swatch_textures = write_swatches(swatch_cands, tex_pkgs, out_dir, stem)
     return {'map': mapping, 'classes': classes, 'rewrites': report['rewrites'],
             'appended_names': report['appended_names'], 'missing': [], 'notes': notes,
-            'unresolved': unresolved, 'output': out_utoc}, None
+            'unresolved': unresolved, 'output': out_utoc, 'swatches': swatches,
+            'swatch_textures': swatch_textures}, None
 
 
 # ------------------------------------------------------------------------------ Lua table
@@ -1096,6 +1156,14 @@ def _main(argv, tee):
                         try:
                             os.remove(os.path.join(mod_out, f))
                             print(f'  removed stale {f}')
+                        except OSError:
+                            pass
+                sw = os.path.join(mod_out, 'swatches')
+                for f in (os.listdir(sw) if os.path.isdir(sw) else []):
+                    m = re.fullmatch(r'(.+)_\d+\.png', f)
+                    if m and m.group(1).lower() not in keep:
+                        try:
+                            os.remove(os.path.join(sw, f))
                         except OSError:
                             pass
             for d in siblings:

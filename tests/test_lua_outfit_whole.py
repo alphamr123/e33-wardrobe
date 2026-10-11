@@ -62,6 +62,10 @@ asset("MaterialInstanceConstant", "/Game/Characters/ZWGREY/Body/MI_Body_Mod", "M
   { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("BaseColor") },
       ParameterValue = setmetatable({}, { __index = function(_, k) if k == "IsValid" then return function() return false end end end }) } }) })
 asset("Texture2D", "/Game/Characters/ZWGREY/Chic/T_Chic_D-mod", "T_Chic_D-mod")
+asset("SkeletalMesh", "/Game/Characters/ZWGREY2/Body/SK_Lune_Bikini_C_Skin", "SK_Lune_Bikini_C_Skin",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY/Body/MI_Body_Mod.MI_Body_Mod") } }) })
+asset("Texture2D", "/Game/Characters/ZWGREY2/Body/body_high_BaseColor-mod", "body_high_BaseColor-mod")
+asset("Texture2D", "/Game/Characters/ZWGREY2/Body/underwear_color-mod", "underwear_color-mod")
 asset("SkeletalMesh", "/Game/Characters/ZWGREY/Body/SK_Lune_Bikini_B_Skin", "SK_Lune_Bikini_B_Skin",
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY/Body/MI_Body_Mod.MI_Body_Mod") } }) })
 '''
@@ -91,6 +95,12 @@ VARIANTS = r'''return {
       { id = "G/a", label = "A", map = {
         ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_B_Skin"] = { "/Game/Characters/ZWGREY/Body/SK_Lune_Bikini_B_Skin", "SK_Lune_Bikini_B_Skin", "SkeletalMesh" },
         ["/Game/Characters/Lune/Chic/T_Chic_D-mod"] = { "/Game/Characters/ZWGREY/Chic/T_Chic_D-mod", "T_Chic_D-mod", "Texture2D" } } } } } } },
+  { mod = "Grey2", slots = {
+    { id = "G2/main", label = "Grey2: Lune outfit", character = "Lune", variants = {
+      { id = "G2/a", label = "A", map = {
+        ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_C_Skin"] = { "/Game/Characters/ZWGREY2/Body/SK_Lune_Bikini_C_Skin", "SK_Lune_Bikini_C_Skin", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/underwear_color-mod"] = { "/Game/Characters/ZWGREY2/Body/underwear_color-mod", "underwear_color-mod", "Texture2D" },
+        ["/Game/Characters/Lune/Body/body_high_BaseColor-mod"] = { "/Game/Characters/ZWGREY2/Body/body_high_BaseColor-mod", "body_high_BaseColor-mod", "Texture2D" } } } } } } },
   -- one costume for two characters (PC: "Altered Flower Suit Costume", Lune + Maelle + Sciel):
   -- the slot is tied to nobody; each mesh's path says whose it is
   { mod = "Costume", slots = {
@@ -297,7 +307,18 @@ def main():
     check('an empty base colour in a mod\'s material (an invalid object in UE4SS) gets the mod\'s own unused texture '
           'named like the old one (T_Chic_D -> T_Chic_D-mod), not grey',
           mesh().startswith('/Game/Characters/ZWGREY/') and tex() == '/Game/Characters/ZWGREY/Chic/T_Chic_D-mod.T_Chic_D-mod'
-          and "(the mod's own, named like it)" in live, (mesh(), tex(), [l for l in live.splitlines() if 'empty' in l][:2]))
+          and "(the mod's own texture for it)" in live, (mesh(), tex(), [l for l in live.splitlines() if 'empty' in l][:2]))
+    shutil.rmtree(tmp)
+
+    # ---- the same, but the mod's texture has another name (PC: Sciel's Cheeki body, body_high_BaseColor-nude)
+    tmp, mod, L, G, W, mesh, tex = run('')
+    gi = [x.id for x in W.slots().values()].index('G2/main') + 1
+    W.setVariant(gi, 1)
+    G.settle()
+    G.tickGT(40)
+    check('  a texture of the mod named for the kind of parameter (BaseColor -> body_high_BaseColor), not underwear',
+          mesh().startswith('/Game/Characters/ZWGREY2/') and tex() == '/Game/Characters/ZWGREY2/Body/body_high_BaseColor-mod.body_high_BaseColor-mod',
+          (mesh(), tex()))
     shutil.rmtree(tmp)
 
     # an old pick saved under the unsplit slot is carried over too
