@@ -14,7 +14,7 @@ import threading
 import time
 import traceback
 
-from . import archives, library, paths
+from . import archives, fixes, library, paths
 
 STEP_LABELS = {
     'unpack': 'Unpacked',
@@ -22,6 +22,8 @@ STEP_LABELS = {
     'install': 'Preparing for the in-game menu',
     'remove': 'Removed from the in-game menu',
     'delete': 'Deleted from the library',
+    'bundle': 'Copied the missing files',
+    'unbundle': 'Removed the bundled files',
 }
 KEEP_JOBS = 30
 
@@ -123,6 +125,25 @@ def run_relocator(argv, on_line):
     return (rc if isinstance(rc, int) else 0), list(tail)
 
 
+_CLASS = {c: f'[{c}]' for c in '.*+?(){}|$'}
+_CLASS.update({'[': '.', ']': '.', '^': '.'})       # no class for these ('[[' warns): any one character
+
+
+def _only_regex(rel):
+    """An option path as a regex for the relocator's --only, without backslashes (it turns them into
+    '/' for Windows paths): special characters go into [ ]."""
+    return ''.join(_CLASS.get(c, c) for c in rel)
+
+
+def write_menu(lua_dir):
+    """variants.lua again from the wardrobe and fixes.json (the relocator writes it without the fixes)."""
+    if lua_dir and fixes.available():
+        try:
+            fixes.tool().write_menu(lua_dir)
+        except Exception:
+            pass
+
+
 def _last_meaningful(tail):
     for s in reversed(tail):
         s = s.strip()
@@ -163,8 +184,17 @@ class JobQueue:
         return self._submit('add', archives.group_label(group), archives.group_size(group),
                             ['unpack', 'sort', 'install'], payload=group)
 
-    def reinstall(self, mod_id, size=0):
+    def reinstall(self, mod_id, size=0, only=None):
+        """only: option paths (relative to the mod's folder) to prepare again; then the job is a 'repair'."""
+        if only:
+            return self._submit('repair', mod_id, size, ['install'], payload={'only': list(only)}, mod_id=mod_id)
         return self._submit('reinstall', mod_id, size, ['install'], mod_id=mod_id)
+
+    def bundle(self, mod_id, payload, size=0):
+        """payload: {from_mod, from_option, packages} to copy files in, or {remove: bundle id}; then prepare
+        the mod again."""
+        first = 'unbundle' if payload.get('remove') else 'bundle'
+        return self._submit('bundle', mod_id, size, [first, 'install'], payload=payload, mod_id=mod_id)
 
     def remove(self, mod_id, delete_files, size=0):
         steps = ['remove'] + (['delete'] if delete_files else [])
@@ -324,6 +354,7 @@ class JobQueue:
             self._set(job, 'sort', state='done', detail=library.plural(len(rows), 'row') + ' in the menu', tags=tags)
 
             self._relocate(job, target, ctx)
+            library.record_source(name, [os.path.basename(i) for i in job.payload.get('items') or []])
         except BaseException as e:
             restored = False
             if backup and os.path.isdir(paths.lp(backup)):
@@ -343,7 +374,7 @@ class JobQueue:
             shutil.rmtree(paths.lp(backup), ignore_errors=True)
 
     # -- install (relocate)
-    def _relocate(self, job, mod_folder, ctx):
+    def _relocate(self, job, mod_folder, ctx, only=None):
         self._set(job, 'install', state='run', detail='Starting', progress=0.0)
         if not ctx.get('retoc'):
             raise JobFailed("retoc was not found, so mods can't be prepared. It belongs in the app's bin folder: "
@@ -364,7 +395,7 @@ class JobQueue:
                     labels[o['rel']] = library.option_label(base)
                 else:
                     labels[o['rel']] = f'{row} · {library.option_label(base, row)}'
-        total = max(1, sum(len(v) for v in slots.values()))
+        total = max(1, len(only) if only else sum(len(v) for v in slots.values()))
         prefix = f'[{mod_name}] '
         state = {'k': 0}
 
@@ -381,12 +412,17 @@ class JobQueue:
                 job.notes.append(s[len('WARNING:'):].strip())
 
         argv = ['--paks', ctx['paks'], '--mod', mod_folder, '--retoc', ctx['retoc'], '--lua-dir', ctx['lua_dir']]
+        if only:
+            argv += ['--only', '^(' + '|'.join(_only_regex(r) for r in only) + ')$']
         try:
             rc, tail = run_relocator(argv, on_line)
         except OSError as e:
             raise JobFailed(f"Couldn't write {e.filename or 'a file'}: {e.strerror or e}. Is the game folder read-only?")
+        write_menu(ctx['lua_dir'])
         view = library.View(ctx['library'], ctx['paks'], ctx['lua_dir'])
         rep = {k: v for k, v in view.report(mod_name).items() if not k.endswith('/(shared)')}
+        if only:
+            rep = {k: v for k, v in rep.items() if k.split('/', 1)[-1] in set(only)}
         ok = [k for k, v in rep.items() if not v.get('error')]
         failed = [v for v in rep.values() if v.get('error')]
         if rc != 0 or not ok:
@@ -406,13 +442,49 @@ class JobQueue:
         self._set(job, 'install', state='done', detail=detail, progress=1.0)
 
     # -- reinstall
-    def _run_reinstall(self, job):
-        ctx = self.env._context()
+    def _mod_folder(self, job, ctx):
         folder = library.safe_child(ctx['library'], job.mod_id)
         if not folder or not os.path.isdir(paths.lp(folder)):
             self._set(job, 'install', state='run')
             raise JobFailed(f'The folder of {job.mod_id} is missing from the library.')
-        self._relocate(job, folder, ctx)
+        return folder
+
+    def _run_reinstall(self, job):
+        ctx = self.env._context()
+        folder = self._mod_folder(job, ctx)
+        self._relocate(job, folder, ctx)        # a disabled mod stays disabled (the relocator parks it again)
+
+    def _run_repair(self, job):
+        ctx = self.env._context()
+        folder = self._mod_folder(job, ctx)
+        self._relocate(job, folder, ctx, only=job.payload.get('only'))
+
+    def _run_bundle(self, job):
+        ctx = self.env._context()
+        folder = self._mod_folder(job, ctx)
+        T = fixes.tool()
+        p = job.payload
+        if p.get('remove'):
+            self._set(job, 'unbundle', state='run')
+            T.remove_bundle(ctx['lua_dir'], job.mod_id, p['remove'])
+            self._set(job, 'unbundle', state='done', detail='Removed from fixes.json and the bundles folder')
+        else:
+            self._set(job, 'bundle', state='run')
+            running = getattr(self.env, '_game_running', None)
+            if running and running():
+                raise JobFailed('Close the game first: copying the files needs the game\'s paks.')
+            src = library.safe_child(ctx['library'], p.get('from_mod') or '')
+            if not src or not os.path.isdir(paths.lp(src)):
+                raise JobFailed(f"The folder of {p.get('from_mod')} is missing from the library.")
+            try:
+                b = T.make_bundle(ctx['paks'], ctx['lua_dir'], job.mod_id, src, list(p.get('packages') or []),
+                                  retoc=ctx['retoc'], from_option=p.get('from_option'), from_mod=p.get('from_mod'))
+            except Exception as e:          # e33fixes raises with a plain message
+                raise JobFailed(f"Couldn't copy the files from {p.get('from_mod')}: {e}")
+            n = len((b or {}).get('packages') or [])
+            self._set(job, 'bundle', state='done', detail=f"{library.plural(n, 'file')} from {p.get('from_mod')}")
+        self.env._bump()
+        self._relocate(job, folder, ctx)        # the full run puts the bundled files into the shared pak
 
     # -- remove
     def _run_remove(self, job):
@@ -427,6 +499,7 @@ class JobQueue:
             if rc != 0:
                 raise JobFailed("Couldn't take it out of the menu"
                                 + (f': {library.plain_error(_last_meaningful(tail))}' if _last_meaningful(tail) else '.'))
+            write_menu(ctx['lua_dir'])
             detail = 'Taken out of the in-game menu'
         else:
             detail = "It wasn't in the in-game menu"

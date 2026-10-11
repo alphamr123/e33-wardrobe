@@ -22,7 +22,10 @@ UI_DIR = os.path.join(ROOT, 'app', 'ui')
 METHODS = ['get_state', 'set_game_folder', 'pick_game_folder', 'detect_game', 'pick_files', 'pick_folder',
            'add_paths', 'poll', 'list_mods', 'mod_details', 'reinstall_mod', 'remove_mod', 'install_menu',
            'open_path', 'open_url', 'monitor', 'problems_text', 'get_settings', 'save_settings',
-           'clear_jobs', 'pick_library_folder', 'reinstall_mods', 'remove_mods', 'texture_preview', 'monitor_file']
+           'clear_jobs', 'pick_library_folder', 'reinstall_mods', 'remove_mods', 'texture_preview', 'monitor_file',
+           'set_disabled', 'rows_editor', 'save_rows', 'texture_choices', 'set_texture_rule', 'material_choices',
+           'set_material_rule', 'bundle_plan', 'bundle', 'undo_fix', 'undo_all_fixes', 'check_mods', 'repair',
+           'repair_option', 'compare_mods', 'culprit', 'reconcile']
 
 
 def js_api(api):

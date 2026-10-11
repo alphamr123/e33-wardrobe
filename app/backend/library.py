@@ -9,7 +9,7 @@ import os
 import re
 import shutil
 
-from . import paths
+from . import fixes as fixes_mod, paths
 from .archives import common_words, has_paks, sanitize_name
 
 SKIP_LIBRARY = ('.', '_e33wardrobe_work_', '_e33mixer_swatch_')
@@ -575,6 +575,10 @@ class View:
         self._all_reports = None
         self._keys = {}
         self._shared = {}
+        self._index = None
+        self.fixes = fixes_mod.load(lua_dir)                 # fixes.json (empty without the menu folder)
+        self.disabled = fixes_mod.disabled_mods(self.fixes)
+        self.disabled_dir = fixes_mod.disabled_root(paks) if paks else None
 
     # -- discovery
     def mod_ids(self):
@@ -594,16 +598,18 @@ class View:
         f = safe_child(self.library, mod_id)
         return f if f and os.path.isdir(paths.lp(f)) else None
 
-    def resolve_output(self, path):
-        """A registry output path, also after the game folder moved."""
+    def resolve_output(self, path, parked=True):
+        """A registry output path, also after the game folder moved. parked: also look in the disabled
+        folder (where a disabled mod's files are)."""
         if not path:
             return None
         if os.path.isfile(path):
             return path
-        if self.out_root:
-            alt = os.path.join(self.out_root, os.path.basename(os.path.dirname(path)), os.path.basename(path))
-            if os.path.isfile(alt):
-                return alt
+        for root in (self.out_root, self.disabled_dir if parked else None):
+            if root:
+                alt = os.path.join(root, os.path.basename(os.path.dirname(path)), os.path.basename(path))
+                if os.path.isfile(alt):
+                    return alt
         return None
 
     def report_dir(self, name):
@@ -616,11 +622,12 @@ class View:
                         return os.path.dirname(out)
         if not self.out_root:
             return None
-        cand = os.path.join(self.out_root, _t()['relocate'].safe_name(name))
-        if os.path.isfile(os.path.join(cand, 'relocate_report.json')):
-            rep = paths.read_json(os.path.join(cand, 'relocate_report.json'), {}) or {}
-            if not rep or any(k.startswith(name + '/') for k in rep):
-                return cand
+        for root in (self.out_root, self.disabled_dir):
+            cand = os.path.join(root, _t()['relocate'].safe_name(name)) if root else None
+            if cand and os.path.isfile(os.path.join(cand, 'relocate_report.json')):
+                rep = paths.read_json(os.path.join(cand, 'relocate_report.json'), {}) or {}
+                if not rep or any(k.startswith(name + '/') for k in rep):
+                    return cand
         if self._all_reports is None:
             self._all_reports = {}
             if os.path.isdir(self.out_root):
@@ -675,10 +682,11 @@ class View:
                     out.append((p, texs[i] if i < len(texs) else None))
         return out
 
-    def describe(self, mod_id, swatches=True, names=False):
+    def describe(self, mod_id, swatches=True, names=False, fixes=True):
         """Everything about one mod: the ModDetails shape plus a few fields for the summary.
         names: also look up the names of files that links point to but nobody has (slower: reads the
-        mod's paks; mod_details only)."""
+        mod's paks; mod_details only). fixes: show the rows as the menu shows them after the user's
+        edits (fixes.json), and list the fixes."""
         folder = self.folder(mod_id)
         reg = self.by_name.get(mod_id)
         if not folder and not reg:
@@ -778,14 +786,16 @@ class View:
                 if ': ' in (reloc_label or '') and rel.count('/') >= 2:
                     shown = reloc_label.split(': ', 1)[0] + ': ' + shown
                 missing = [{'in': p, 'name': leaf(p), 'links': n, 'texture': _cls(classes.get(p)).startswith('Material'),
-                            'names': list(found.get(p) or [])} for p, n in sorted(unresolved.items())]
+                            'names': list(found.get(p) or []),
+                            'found_in': [x for x in (self.find_package(nm, mod_id) for nm in found.get(p) or []) if x]}
+                           for p, n in sorted(unresolved.items())]
                 if unresolved and not guessed:
                     unresolved_opts.append((label, shown, missing))
                 options.append({'id': vid, 'label': shown, 'changes': changes_summary(classes),
                                 'textures': texture_summary(classes, outfit_mod, guessed), 'tags': tags, 'swatch': swatch,
                                 'ok': ok, 'error': error, 'notes': notes,
                                 'files': option_files(classes) if not guessed else [],
-                                'images': images, 'missing': missing})
+                                'images': images, 'missing': missing, 'rules': self.option_rules(mod_id, vid)})
             ch = slot.get('character') or character_of(key) or character_of(mod_id)
             if not ch and len(row_chars) == 1:
                 ch = next(iter(row_chars))
@@ -802,8 +812,11 @@ class View:
 
         # state
         report_variants = [v for k, v in rep.items() if not k.endswith('/(shared)')]
+        disabled = mod_id in self.disabled
         if mod_id in self.active:
             state = 'working'
+        elif disabled and reg:
+            state = 'disabled'
         elif reg and installed_variants and not missing_outputs:
             state = 'ready'
         elif report_variants and all(v.get('error') and not v.get('kept_previous') for v in report_variants):
@@ -820,8 +833,8 @@ class View:
             notes.append({'level': 'warn', 'text': f"{n_failed} of {n_opts} options couldn't be prepared and aren't "
                                                    f"in the menu: {name_list(bad, multi_rows)}.",
                           'items': [opt_name(rl, ol, multi_rows) for rl, ol in bad], 'what': 'options'})
-        if missing_outputs:
-            notes.append({'level': 'warn', 'text': 'Some prepared files are missing. Reinstall the mod.'})
+        if missing_outputs and not disabled:
+            notes.append({'level': 'warn', 'text': 'Some prepared files are missing. Use Tools, Check & repair.'})
         if unresolved_opts:
             n = len(unresolved_opts)
             items = []
@@ -850,7 +863,7 @@ class View:
                     notes.append({'level': 'warn',
                                   'text': f'"{other["name"]}" has {len(files)} of this mod\'s new files '
                                           f'({names_of(files)}). Two versions of one mod? Keep only one in the library.',
-                                  'items': files, 'what': 'files'})
+                                  'items': files, 'what': 'files', 'compare': other['name']})
 
         who = ' and '.join(chars_all) if chars_all else ''
         if has_body:
@@ -878,13 +891,44 @@ class View:
                 summary_swatches.append(u)
             if len(summary_swatches) >= 4:
                 break
+        entry = fixes_mod.mod_entry(self.fixes, mod_id)
+        if fixes:
+            rows = fixes_mod.apply_rows(rows, entry)
         return {
             'id': mod_id, 'name': mod_id, 'characters': chars_all, 'replaces': replaces, 'options': n_opts,
-            'size': size_bytes, 'folder': folder, 'state': state, 'rows': rows,
+            'size': size_bytes, 'folder': folder, 'state': state, 'rows': rows, 'disabled': disabled,
+            'fixes': fixes_mod.fix_items(entry, {'rows': rows}) if fixes else [],
             'skin': {'has': has_body, 'text': text, 'swatches': skin_swatches, 'images': skin_images},
             'overlaps': overlaps, 'notes': notes,
             '_swatches': summary_swatches,
         }
+
+    def option_rules(self, mod_id, vid):
+        """The texture / material rules (fixes.json) of one option: [{kind, key, value}]."""
+        e = fixes_mod.mod_entry(self.fixes, mod_id)
+        out = []
+        for kind, group in (('texture', 'textures'), ('material', 'materials')):
+            for key, val in sorted(((e.get(group) or {}).get(vid) or {}).items()):
+                out.append({'kind': kind, 'key': key, 'value': val})
+        return out
+
+    def find_package(self, pkg, not_in=None):
+        """Where another mod in the library has this package: {mod, option, label} or None."""
+        if self._index is None:
+            self._index = {}
+            for mid in self.mod_ids():
+                f = self.folder(mid)
+                if not f:
+                    continue
+                for rel in option_folders(f):
+                    for u in utocs_in(os.path.join(f, *rel.split('/')) if rel else f):
+                        for p in packages_of(u):
+                            self._index.setdefault(p.lower(), []).append((mid, rel))
+        for mid, rel in self._index.get((pkg or '').lower(), []):
+            if mid != not_in:
+                return {'mod': mid, 'option': f'{mid}/{rel}', 'label': option_label(os.path.basename(rel)) if rel else mid,
+                        'package': pkg}
+        return None
 
     def option_images(self, vid, classes, sw, outfit_mod):
         """The textures of one option for the image viewer: [{ref, name, path, kind, width, height,
@@ -917,11 +961,11 @@ class View:
 
     def shared_files(self, mod):
         """{lower-case path: path} of a relocated mod's shared (mod-only) files, without its
-        PrimaryAssetLabels: cook metadata that does nothing in game, which two different mods of one
-        author often share."""
+        PrimaryAssetLabels (cook metadata that does nothing in game, which two different mods of one
+        author often share) and without files it bundled from another mod (copies on purpose)."""
         if mod['name'] in self._shared:
             return self._shared[mod['name']]
-        labels, case = set(), {}
+        labels, case = {p.lower() for p in mod.get('bundled') or [] if isinstance(p, str)}, {}   # bundled: copies
         for s in mod.get('slots', []):
             for v in s.get('variants', []):
                 for p, c in (v.get('classes') or {}).items():
@@ -998,6 +1042,26 @@ class View:
                                         unresolved, cache)
         except Exception:
             return {}
+
+
+def record_source(mod, files):
+    """Remember which downloads a mod came from (for Compare): %APPDATA%\\E33Wardrobe\\sources.json."""
+    p = os.path.join(paths.app_data_dir(), 'sources.json')
+    data = paths.read_json(p, {}) or {}
+    if not isinstance(data, dict):
+        data = {}
+    import datetime as _dt
+    data[mod] = {'files': [f for f in files if isinstance(f, str)], 'added': _dt.datetime.now().strftime('%Y-%m-%d %H:%M')}
+    try:
+        paths.write_json(p, data)
+    except OSError:
+        pass
+
+
+def source_of(mod):
+    data = paths.read_json(os.path.join(paths.app_data_dir(), 'sources.json'), {}) or {}
+    s = data.get(mod) if isinstance(data, dict) else None
+    return s if isinstance(s, dict) else None
 
 
 def summary_of(d):

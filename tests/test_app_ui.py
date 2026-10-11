@@ -195,6 +195,55 @@ def main():
               sorted(j['mod_id'] for j in new) == names and all(j['kind'] == 'reinstall' and j['status'] == 'done' for j in new),
               new)
 
+        # 1.3: disable / enable, Edit rows, Tools > Check & repair
+        page.locator('#modlist tbody tr[data-id="Second Outfit"] td:nth-child(2)').click()
+        for mid in names:                                   # untick both first
+            page.locator(f'#modlist tbody tr[data-id="{mid}"] input[data-chk]').click()
+        page.wait_for_timeout(300)
+        page.locator('#tb-disable').click()
+        t0 = time.time()
+        while time.time() - t0 < 10 and api.mod_details('Second Outfit').get('state') != 'disabled':
+            page.wait_for_timeout(200)
+        page.wait_for_timeout(800)
+        lua_dir = os.path.join(ue4ss, 'Mods', 'E33Wardrobe')
+        menu = open(os.path.join(lua_dir, 'Scripts', 'variants.lua'), encoding='utf-8').read()
+        check('Disable in the toolbar: the mod is disabled, out of the menu list, shown greyed with a banner',
+              api.mod_details('Second Outfit')['state'] == 'disabled' and '"Second Outfit"' not in menu
+              and 'dis' in (page.get_attribute('#modlist tbody tr[data-id="Second Outfit"]', 'class') or '')
+              and 'Disabled: the game' in page.inner_text('#details-body') and page.inner_text('#tb-disable') == 'Enable',
+              page.inner_text('#details-body')[:300])
+        shot(page, '7b_disabled')
+        page.locator('#tb-disable').click()
+        t0 = time.time()
+        while time.time() - t0 < 10 and api.mod_details('Second Outfit').get('state') != 'ready':
+            page.wait_for_timeout(200)
+        check('  Enable puts it back', api.mod_details('Second Outfit')['state'] == 'ready')
+        page.wait_for_timeout(800)
+        page.locator('#btn-edit-rows').click()
+        page.wait_for_timeout(500)
+        page.locator('#ed-tree .tn.row').first.click()
+        page.locator('[data-ed="rename"]').click()
+        page.fill('#ed-name', 'Test row')
+        page.keyboard.press('Enter')
+        page.wait_for_timeout(100)
+        shot(page, '7c_edit_rows')
+        page.locator('.dlg-buttons .btn', has_text='OK').click()
+        page.wait_for_timeout(1000)
+        menu = open(os.path.join(lua_dir, 'Scripts', 'variants.lua'), encoding='utf-8').read()
+        check('Edit rows: a renamed row is saved in fixes.json and reaches variants.lua',
+              '"Test row"' in menu and os.path.isfile(os.path.join(lua_dir, 'fixes.json'))
+              and 'Test row' in page.inner_text('#details-body') and 'Fixes' in page.inner_text('#details-body'), menu[:400])
+        page.locator('#tb-tools').click()
+        page.locator('#ctxmenu .mi', has_text='Check & repair').click()
+        t0 = time.time()
+        while time.time() - t0 < 15 and 'Checked' not in (page.inner_text('#modal-layer') if page.locator('#modal-layer').is_visible() else ''):
+            page.wait_for_timeout(200)
+        txt = page.inner_text('#modal-layer')
+        check('Tools > Check & repair: checks every mod and says what it found', 'Checked 2 mods' in txt and 'no problems' in txt, txt[:300])
+        shot(page, '7d_check')
+        page.keyboard.press('Escape')
+        page.wait_for_timeout(200)
+
         # the game log: click a problem to see only its lines
         menu_dir = os.path.join(ue4ss, 'Mods', 'E33Wardrobe')
         now = dt.datetime.now()
@@ -240,6 +289,9 @@ def main():
         page.wait_for_timeout(300)
 
         # Delete with ticked mods: one dialog listing them, with "also delete files"
+        for mid in names:
+            page.locator(f'#modlist tbody tr[data-id="{mid}"] input[data-chk]').click()
+        page.wait_for_timeout(200)
         page.locator('#modlist').focus()
         page.keyboard.press('Delete')
         page.wait_for_timeout(500)

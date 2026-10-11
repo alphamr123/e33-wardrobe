@@ -197,6 +197,29 @@ def _short(s, n):
     return s if len(s) <= n else s[:n - 3].rstrip() + '...'
 
 
+_FIX_TAG = re.compile(r'\s*\{fix:(tex|mat)\|([^{}]*)\}\s*$')
+
+
+def _fix_tag(text):
+    """Split the menu's '{fix:...}' tag off a line (users never see it): (text, fix or None).
+    {fix:tex|<variant>|<material>|<param>} and {fix:mat|<variant>|<mesh>|<slot>|<slot name>};
+    variant '?' (not one of a mod's materials) gives no fix."""
+    m = _FIX_TAG.search(text)
+    if not m:
+        return text, None
+    parts, fix = m.group(2).split('|'), None
+    if m.group(1) == 'tex' and len(parts) >= 3:
+        vid, mat, param = '|'.join(parts[:-2]), parts[-2], parts[-1]
+        if vid and vid != '?' and '/' in vid:
+            fix = {'kind': 'texture', 'mod': vid.split('/', 1)[0], 'variant': vid, 'material': mat, 'param': param}
+    elif m.group(1) == 'mat' and len(parts) >= 4:
+        vid, mesh, slot, name = '|'.join(parts[:-3]), parts[-3], parts[-2], parts[-1]
+        if vid and vid != '?' and '/' in vid:
+            fix = {'kind': 'material', 'mod': vid.split('/', 1)[0], 'variant': vid, 'mesh': mesh,
+                   'slot': int(slot) if slot.isdigit() else slot, 'slot_name': name}
+    return text[:m.start()], fix
+
+
 def _cap(s, n=1000):
     """A log line for the page, at most n characters (keeps the indentation)."""
     return s if len(s) <= n else s[:n - 3] + '...'
@@ -428,6 +451,7 @@ class Monitor:
         self._up_dt = None
         self._history = False
         self._cur_line = None           # the line being read: problems keep it (see _add_lines)
+        self._cur_fix = None            # the {fix:...} tag of that line
         self.ue_tail = collections.deque(maxlen=self._tail_lines)    # UE4SS.log lines, "HH:MM:SS text"
         self._newest = None             # time of the newest line read from either log
         self._n_lines = 0               # lines read (both logs)
@@ -472,7 +496,8 @@ class Monitor:
                 'last_activity': self.last_activity,
                 'ended': _hms(self._newest),
                 'date': self._newest.strftime('%Y-%m-%d') if self._newest else None,
-                'problems': [dict({k: p[k] for k in PUBLIC}, lines=list(p.get('_lines') or [])) for p in probs],
+                'problems': [dict({k: p[k] for k in PUBLIC}, lines=list(p.get('_lines') or []),
+                                  fix=dict(p['fix']) if p.get('fix') else None) for p in probs],
                 'on_screen': [dict(r) for r in self.on_screen],
                 'tail': list(self.tail),
             }
@@ -525,7 +550,7 @@ class Monitor:
                     self._read_events(events, now)
                 finally:
                     self._history = False
-                    self._cur_line = None
+                    self._cur_line = self._cur_fix = None
             proc = self._proc_running(now)
             if self._proc_prev and not proc:
                 self._on_exit(now)
@@ -545,13 +570,15 @@ class Monitor:
                 self._cur_line = None
                 self._ue_start(dt)
             elif src == 'live':
+                text, self._cur_fix = _fix_tag(text)
                 self._cur_line = text if cont else f'{_hms(dt)} {text}'
                 self._live_line(dt, text, cont, now)
             else:
+                text, self._cur_fix = _fix_tag(text)
                 self.ue_tail.append(_cap(text if cont else f'{_hms(dt)} {text}'))
                 self._cur_line = f'{_hms(dt)} [UE4SS] {text.strip()}'
                 self._ue_line(dt, text, cont, now)
-            self._cur_line = None
+            self._cur_line = self._cur_fix = None
 
     # ------------------------------------------------------------------ threads
 
@@ -833,6 +860,11 @@ class Monitor:
                 self._add_lines(p)
             return p
         p = self._put(key, r.level, _fill(r.title, v), _fill(r.detail, v), _fill(r.hint, v), dt, rule=r, v=v)
+        if p is not None and p.get('fix'):
+            if 'tex' in v and p['fix'].get('kind') == 'texture':
+                p['fix']['guess'] = v['tex']           # what the menu filled in
+            if 'mat' in v and p['fix'].get('kind') == 'material':
+                p['fix']['current'] = v['mat']
         if r.explains:
             self._ue['explained'] = True
         if r.attrib and p is not None and key not in self._pass_keys:
@@ -868,7 +900,9 @@ class Monitor:
         return p
 
     def _add_lines(self, p):
-        """Keep the log line(s) being read with the problem they raised."""
+        """Keep the log line(s) being read with the problem they raised (and its {fix:...} tag)."""
+        if self._cur_fix:
+            p['fix'] = dict(self._cur_fix)
         cur = self._cur_line
         if not cur:
             return

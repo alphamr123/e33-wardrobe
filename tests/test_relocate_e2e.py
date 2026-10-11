@@ -396,6 +396,104 @@ def main():
     check('--remove: the mod leaves the wardrobe and its relocated paks are deleted', rc == 0
           and 'TestMod' not in vl and not os.path.exists(os.path.join(tmp, 'out5', 'TestMod')), (rc, log10[-300:]))
 
+    # ---- fixes.json: bundling a file from another mod, disabling a mod (the app's fix tools)
+    import e33fixes
+    import e33_relocate
+    game = os.path.join(tmp, 'G', 'Sandfall', 'Content', 'Paks')      # own copy: Disabled goes next to Paks
+    os.makedirs(game)
+    for f in os.listdir(paks):
+        if os.path.isfile(os.path.join(paks, f)):
+            try:
+                os.link(os.path.join(paks, f), os.path.join(game, f))
+            except OSError:
+                shutil.copy2(os.path.join(paks, f), os.path.join(game, f))
+    lib3, lua3 = os.path.join(tmp, 'Lib3'), os.path.join(tmp, 'lua3', 'E33Wardrobe')
+    ln = os.path.join(tmp, 'leg_needy')
+    legacy_copy(ln, ['/Game/Environment/SM_BlueCube'])
+    L.relocate_tree(ln, ln + '_r', {'/Game/Materials/MI_BlueCube': '/Game/Materials/MI_GoneCube'})
+    pack(ln + '_r', os.path.join(lib3, 'Needy', 'Opt', 'Mesh_P'), 'Mesh_P')
+    os.makedirs(os.path.join(lib3, 'Needy', 'Opt', 'Mesh2_P'))
+    for f in os.listdir(os.path.join(lib3, 'Needy', 'Opt', 'Mesh_P')):
+        shutil.copy(os.path.join(lib3, 'Needy', 'Opt', 'Mesh_P', f), os.path.join(lib3, 'Needy', 'Opt', 'Mesh2_P', f.replace('Mesh_P', 'Mesh2_P')))
+    ld = os.path.join(tmp, 'leg_donor')
+    legacy_copy(ld, ['/Game/Materials/MI_BlueCube'])
+    L.relocate_tree(ld, ld + '_r', {'/Game/Materials/MI_BlueCube': '/Game/Materials/MI_GoneCube'})
+    pack(ld + '_r', os.path.join(lib3, 'Donor', 'Opt', 'Gone_P'), 'Gone_P')
+    reloc3 = [sys.executable, '-I', os.path.join(TOOLS, 'e33_relocate.py'), '--retoc', retoc, '--paks', game,
+              '--lua-dir', lua3, '--work', tmp]
+    out3 = os.path.join(game, '~mods', '_E33Wardrobe')
+    rc, _ = run(reloc3 + ['--mod', os.path.join(lib3, 'Needy')])
+    r0 = json.load(open(os.path.join(out3, 'relocate_report.json'))).get('Needy/Opt/Mesh_P', {})
+    check('bundle: before, the option links to a file nowhere (MI_GoneCube)', rc == 0 and r0.get('unresolved'), r0)
+    rec = e33fixes.make_bundle(game, lua3, 'Needy', os.path.join(lib3, 'Donor'), ['/Game/Materials/MI_GoneCube'],
+                               retoc=retoc, from_option='Donor/Opt/Gone_P')
+    check('  make_bundle copies it from the other mod into a small container under the menu folder',
+          rec['packages'] == ['/Game/Materials/MI_GoneCube'] and os.path.isfile(os.path.join(lua3, *rec['utoc'].split('/')))
+          and e33fixes.load(lua3)['mods']['Needy']['bundles'][0]['from_mod'] == 'Donor', rec)
+    rc, log11 = run(reloc3 + ['--mod', os.path.join(lib3, 'Needy')])
+    rep11 = json.load(open(os.path.join(out3, 'relocate_report.json')))
+    r1, sh1 = rep11.get('Needy/Opt/Mesh_P', {}), rep11.get('Needy/(shared)', {})
+    check('  after Reinstall the link resolves (no unresolved imports) and the shared pak holds the file',
+          rc == 0 and not r1.get('unresolved') and '/game/materials/mi_gonecube' in sh1.get('packages', []), (r1.get('notes'), sh1))
+    rc, log12 = run(reloc3 + ['--mod', os.path.join(lib3, 'Donor')])
+    reg3 = json.load(open(os.path.join(lua3, 'wardrobe_registry.json')))
+    check('  a bundled file in both mods\' shared paks is not reported as "two versions of one mod"',
+          rc == 0 and 'Two versions' not in log12 and e33_relocate.shared_clashes(reg3) == {}
+          and next(m for m in reg3 if m['name'] == 'Needy').get('bundled') == ['/game/materials/mi_gonecube'], log12[-400:])
+    vl = lambda: open(os.path.join(lua3, 'Scripts', 'variants.lua'), encoding='utf-8').read()  # noqa: E731
+    dis = os.path.join(e33fixes.disabled_root(game), 'Needy')
+    r = e33fixes.set_disabled(game, lua3, 'Needy', True)
+    check('disable: the prepared files move out of Paks and the menu leaves the mod out',
+          r['ok'] and not os.path.isdir(os.path.join(out3, 'Needy')) and os.path.isdir(dis)
+          and not os.path.commonpath([os.path.abspath(dis), os.path.abspath(game)]) == os.path.abspath(game)
+          and 'mod = "Needy"' not in vl() and 'mod = "Donor"' in vl(), (r, os.listdir(out3)))
+    rc, log13 = run(reloc3 + ['--mod', os.path.join(lib3, 'Needy')])
+    check('  Reinstall of a disabled mod keeps it disabled (prepared, then moved back out)',
+          rc == 0 and 'is disabled' in log13 and os.path.isdir(dis) and not os.path.isdir(os.path.join(out3, 'Needy'))
+          and any(f.endswith('.utoc') for f in os.listdir(dis)) and 'mod = "Needy"' not in vl(), log13[-400:])
+    r = e33fixes.set_disabled(game, lua3, 'Needy', False)
+    check('enable: back in ~mods and in the menu', r['ok'] and os.path.isdir(os.path.join(out3, 'Needy'))
+          and not os.path.isdir(dis) and 'mod = "Needy"' in vl(), r)
+    e33fixes.set_disabled(game, lua3, 'Needy', True)
+    rc, _ = run(reloc3 + ['--remove', 'Needy'])
+    check('--remove of a disabled mod deletes its parked copy and forgets "disabled"', rc == 0 and not os.path.isdir(dis)
+          and not e33fixes.is_disabled(e33fixes.load(lua3), 'Needy'), os.listdir(e33fixes.disabled_root(game)))
+
+    # ---- names that clean to the same folder or pak (audit 1.3.0): nothing overwrites another's files
+    lib4 = os.path.join(tmp, 'Lib4')
+    for mod in ('Twin A', 'Twin_A'):
+        for opt in ('Outfit A', 'Outfit_A'):
+            d = os.path.join(lib4, mod, 'Row', opt)
+            os.makedirs(d)
+            for f in os.listdir(os.path.join(lib3, 'Needy', 'Opt', 'Mesh_P')):
+                shutil.copy(os.path.join(lib3, 'Needy', 'Opt', 'Mesh_P', f), os.path.join(d, f.replace('Mesh_P', 'Opt_P')))
+    run(reloc3 + ['--mod', os.path.join(lib4, 'Twin A')])
+    run(reloc3 + ['--mod', os.path.join(lib4, 'Twin_A')])
+    reg4 = {m['name']: m for m in json.load(open(os.path.join(lua3, 'wardrobe_registry.json')))}
+    dir_of = lambda n: os.path.dirname(reg4[n]['slots'][0]['variants'][0]['output'])  # noqa: E731
+    d1, d2 = dir_of('Twin A'), dir_of('Twin_A')
+    check('two mods whose names clean to the same folder get different folders', d1 != d2 and os.path.isdir(d1)
+          and os.path.isdir(d2), (d1, d2))
+    run(reloc3 + ['--mod', os.path.join(lib4, 'Twin_A')])
+    reg4 = {m['name']: m for m in json.load(open(os.path.join(lua3, 'wardrobe_registry.json')))}
+    check('  a later run keeps each mod in the folder it already has', dir_of('Twin_A') == d2 and dir_of('Twin A') == d1,
+          (dir_of('Twin_A'), d2))
+    outs = {v['id']: v['output'] for s_ in reg4['Twin A']['slots'] for v in s_['variants']}
+    oa, ob = outs['Twin A/Row/Outfit A'], outs['Twin A/Row/Outfit_A']
+    before = (os.path.getmtime(oa), os.path.getsize(oa))
+    rc, log14 = run(reloc3 + ['--mod', os.path.join(lib4, 'Twin A'), '--only', 'Row/Outfit_A$'])
+    reg4 = {m['name']: m for m in json.load(open(os.path.join(lua3, 'wardrobe_registry.json')))}
+    outs2 = {v['id']: v['output'] for s_ in reg4['Twin A']['slots'] for v in s_['variants']}
+    check('  repairing one option (--only) writes its own pak, never its look-alike sibling\'s',
+          rc == 0 and outs2['Twin A/Row/Outfit_A'] == ob and outs2['Twin A/Row/Outfit A'] == oa
+          and (os.path.getmtime(oa), os.path.getsize(oa)) == before, (outs2, log14[-300:]))
+    rep4 = json.load(open(os.path.join(d1, 'relocate_report.json')))
+    check('  and the mod\'s own report keeps the other options\' entries', 'Twin A/Row/Outfit A' in rep4
+          and 'Twin A/Row/Outfit_A' in rep4, list(rep4))
+    rc, _ = run(reloc3 + ['--remove', 'Twin_A'])        # its folder is the hashed one; "Twin_A" is the other's
+    check('  removing one deletes only its own folder', rc == 0 and not os.path.isdir(d2) and os.path.isdir(d1)
+          and any(f.endswith('.utoc') for f in os.listdir(d1)), (os.path.isdir(d1), os.path.isdir(d2)))
+
     shutil.rmtree(tmp, ignore_errors=True)
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

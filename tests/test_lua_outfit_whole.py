@@ -77,6 +77,18 @@ asset("SkeletalMesh", "/Game/Characters/ZWGREY3/Body/SK_Lune_Bikini_D_Skin", "SK
                          { MaterialSlotName = FName("Body") },
                          { MaterialSlotName = FName("Extra") } }) })
 asset("Texture2D", "/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude", "T_Chic_D-nude")
+-- rules chosen in the app (fixes.json -> v.fix): a texture for an empty link, a material for a slot
+asset("MaterialInstanceConstant", "/Game/Characters/ZWGREY4/Body/MI_Body_Mod4", "MI_Body_Mod4",
+  { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("BaseColor") },
+      ParameterValue = setmetatable({}, { __index = function(_, k) if k == "IsValid" then return function() return false end end end }) } }) })
+asset("SkeletalMesh", "/Game/Characters/ZWGREY4/Body/SK_Lune_Bikini_E_Skin", "SK_Lune_Bikini_E_Skin",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY4/Body/MI_Body_Mod4.MI_Body_Mod4") } }) })
+asset("Texture2D", "/Game/Characters/ZWGREY4/Chic/T_Chic_D-mod", "T_Chic_D-mod")
+asset("Texture2D", "/Game/Characters/ZWGREY4/Body/T_Picked", "T_Picked")
+asset("SkeletalMesh", "/Game/Characters/ZWGREY5/Body/SK_Lune_Bikini_F_Skin", "SK_Lune_Bikini_F_Skin",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod.MI_Bikini_Mod"), MaterialSlotName = FName("Bikini") },
+                         { MaterialSlotName = FName("Body") },
+                         { MaterialSlotName = FName("Extra") } }) })
 '''
 
 VARIANTS = r'''return {
@@ -116,6 +128,21 @@ VARIANTS = r'''return {
         ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_D_Skin"] = { "/Game/Characters/ZWGREY3/Body/SK_Lune_Bikini_D_Skin", "SK_Lune_Bikini_D_Skin", "SkeletalMesh" },
         ["/Game/Characters/Lune/Bikini/MI_Bikini_Mod"] = { "/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod", "MI_Bikini_Mod", "MaterialInstanceConstant" },
         ["/Game/Characters/Lune/Chic/T_Chic_D-nude"] = { "/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude", "T_Chic_D-nude", "Texture2D" } } } } } } },
+  { mod = "Grey4", slots = {
+    { id = "G4/main", label = "Grey4: Lune outfit", character = "Lune", variants = {
+      { id = "G4/a", label = "A", map = {
+        ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_E_Skin"] = { "/Game/Characters/ZWGREY4/Body/SK_Lune_Bikini_E_Skin", "SK_Lune_Bikini_E_Skin", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Bikini/MI_Body_Mod4"] = { "/Game/Characters/ZWGREY4/Body/MI_Body_Mod4", "MI_Body_Mod4", "MaterialInstanceConstant", false },
+        ["/Game/Characters/Lune/Chic/T_Chic_D-mod"] = { "/Game/Characters/ZWGREY4/Chic/T_Chic_D-mod", "T_Chic_D-mod", "Texture2D" },
+        ["/Game/Characters/Lune/Body/T_Picked"] = { "/Game/Characters/ZWGREY4/Body/T_Picked", "T_Picked", "Texture2D" } },
+        fix = { tex = { ["/game/characters/lune/bikini/mi_body_mod4|*"] = "/Game/Characters/Lune/Body/T_Picked" } } } } } } },
+  { mod = "Grey5", slots = {
+    { id = "G5/main", label = "Grey5: Lune outfit", character = "Lune", variants = {
+      { id = "G5/a", label = "A", map = {
+        ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_F_Skin"] = { "/Game/Characters/ZWGREY5/Body/SK_Lune_Bikini_F_Skin", "SK_Lune_Bikini_F_Skin", "SkeletalMesh" } },
+        fix = { mat = { ["/game/characters/lune/customization/skin/sk_lune_bikini_f_skin|1"] = "hide",
+                        -- a rule naming something that isn't a material is ignored (never set on a slot)
+                        ["/game/characters/lune/customization/skin/sk_lune_bikini_f_skin|2"] = "/Game/Characters/ZWGREY4/Body/T_Picked" } } } } } } },
   -- one costume for two characters (PC: "Altered Flower Suit Costume", Lune + Maelle + Sciel):
   -- the slot is tied to nobody; each mesh's path says whose it is
   { mod = "Costume", slots = {
@@ -364,6 +391,38 @@ def main():
     W.setWear('G3/main', False)
     G.settle()
     check('  Wear off: Chic with its own texture again', mesh() == CHIC and tex() == TEX_VANILLA, (mesh(), tex()))
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
+
+    # ---- rules chosen in the app (fixes.json): they win over the menu's own guesses
+    tmp, mod, L, G, W, mesh, tex = run('')
+    ids = [x.id for x in W.slots().values()]
+    W.setVariant(ids.index('G4/main') + 1, 1)
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('a texture rule fills the empty link with the chosen texture, not the menu\'s guess (T_Chic_D-mod)',
+          mesh().startswith('/Game/Characters/ZWGREY4/') and tex() == '/Game/Characters/ZWGREY4/Body/T_Picked.T_Picked'
+          and '(your choice)' in live, (mesh(), tex()))
+    check('  the fill line names the variant, the material\'s original path and the parameter for the app',
+          '{fix:tex|G4/a|/game/characters/lune/bikini/mi_body_mod4|BaseColor}' in live,
+          [x for x in live.splitlines() if 'fix:tex' in x][:2])
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
+
+    tmp, mod, L, G, W, mesh, tex = run('')
+    ids = [x.id for x in W.slots().values()]
+    W.setVariant(ids.index('G5/main') + 1, 1)
+    G.settle()
+    G.tickGT(40)
+    body = L.eval('function() return ACTORS[1].Body end')()
+    slot = L.eval('function(b, i) local m = b:GetMaterial(i); if not m then return "nil" end; return (m._p.Parent and m._p.Parent._path) or m._path end')
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('a material rule "hide" puts Hide_Material in that empty slot; a rule naming a texture is ignored and that slot gets the skin',
+          slot(body, 1) == '/Game/Materials/Hide_Material.Hide_Material' and slot(body, 2).startswith('/Game/Characters/Lune/Chic/MI_Chic'),
+          (slot(body, 1), slot(body, 2)))
+    check('  the slot lines carry the variant, the mesh\'s original path, slot index and name',
+          '{fix:mat|G5/a|/game/characters/lune/customization/skin/sk_lune_bikini_f_skin|1|body}' in live
+          and '{fix:mat|G5/a|/game/characters/lune/customization/skin/sk_lune_bikini_f_skin|2|extra}' in live,
+          [x for x in live.splitlines() if 'fix:mat' in x][:3])
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
     # an old pick saved under the unsplit slot is carried over too

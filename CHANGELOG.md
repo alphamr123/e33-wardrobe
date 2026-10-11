@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.3.0
+
+The fix tools below are experimental: check the result in game; every fix can be undone.
+
+App:
+- **Disable / Enable** a mod without removing it: its prepared files move out of the game, the
+  menu leaves it out, picks are kept.
+- **Edit rows...**: rename, add, move, order and hide rows and options of a mod in the in-game
+  menu. Kept in fixes.json, so Reinstall keeps them.
+- **Choose texture...** / **Choose material...** for empty texture links and empty material
+  slots, from the option's details or from the Game log problem. Saved as rules for that option.
+- **Bundle it...**: copy a missing file from another mod of the library (often an older version
+  of the same mod) into this one.
+- **Fixes** group in the details: every fix of a mod with Undo and Undo all.
+- **Tools** button: **Check & repair...** (missing prepared files, an old menu list), **Find the
+  problem mod...** (turns half of the suspects off per round; cleared mods stay on; survives an
+  app restart), **Reinstall all**.
+- **Compare...** on "Two versions of one mod?": both mods side by side, then remove one.
+- The app remembers which downloads a mod came from (for Compare).
+
+In-game menu:
+- Uses the rules chosen in the app (Choose texture / Choose material) before its own guesses.
+- Its lines about filled textures and material slots name the option, material or mesh and
+  slot, so the app can offer a Fix button for them.
+
+Relocator:
+- Applies fixes.json (row edits, hidden options, disabled mods, rules, bundles) whenever it writes
+  the menu list. A disabled mod stays disabled when it's prepared again; `--remove` also deletes
+  its parked copy.
+- Bundled files count as part of the mod: links to them resolve and they go into its shared pak.
+  They aren't reported as "two versions of one mod".
+- Safer with your files: moves of prepared folders are all or nothing, two mods whose names clean
+  to the same folder no longer touch each other's files, and repairing one option never overwrites
+  another's pak.
+- The Tools zip of 1.2.0 and 1.2.1 was missing `e33tex.py`, so the command-line relocator didn't
+  start. Fixed (the app was not affected).
+
 ## 1.2.1
 
 App:

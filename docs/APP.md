@@ -8,6 +8,7 @@ no command line.
 - [Adding mods](#adding-mods)
 - [The mod list](#the-mod-list)
 - [Mod details](#mod-details)
+- [Fixing mods](#fixing-mods)
 - [Game log tab](#game-log-tab)
 - [Files and folders](#files-and-folders)
 - [Problems](#problems)
@@ -99,6 +100,45 @@ Text in the details can be selected and copied. Right-click for **Copy**, **Copy
 report or a message). Right-click a mod in the list for the same, and Ctrl+C copies the selected
 row.
 
+## Fixing mods
+
+**Experimental.** These tools are new and have only been tested on a few mods. Check the result in
+game, and use Undo (or Enable, or Reinstall) if something looks wrong. Please report what didn't
+work, with `report.txt`.
+
+Every fix is kept in `fixes.json` in the menu folder, so Reinstall doesn't undo it. Your downloads
+in the library are never changed. After a fix, press **Reload** in the in-game menu.
+
+- **Disable / Enable** (toolbar, details, right-click): takes a mod out of the game without
+  removing it. Its prepared files move to `Sandfall\Content\E33Wardrobe_Disabled`, the menu
+  leaves it out, and your picks are kept for when you enable it again.
+- **Edit rows...** (details, right-click): rename rows and options, make a new row, move options to
+  another row, change the order, hide options. Hidden options are still prepared; the menu just
+  doesn't list them. **Reset all** goes back to the rows the mod comes with.
+- **Choose texture...**: when a mod's material points at a texture the mod doesn't include, pick
+  which texture fills it (one of the option's textures, or the game's own). The button is on the
+  option in the details, and on the Game log problem "Filled in a missing texture".
+- **Choose material...**: when a mod's mesh leaves a material slot empty, pick what it shows: the
+  body's own material, one of the option's materials, or nothing. On the Game log problem.
+- **Bundle it...**: when the file a link points to is in another mod of your library (often an
+  older version of the same mod), copy it into this mod. The copy is the app's own: it stays when
+  the other mod is removed. The mod is prepared again afterwards.
+- **Fixes** in the details lists every fix of the mod with **Undo** (and **Undo all**).
+- **Compare...** on the note "Two versions of one mod?": both mods side by side (downloads,
+  version, date added, options, size, the shared files). Remove the one you don't want.
+
+**Tools** in the toolbar:
+
+- **Check & repair...**: checks that every enabled mod's prepared files are there and the menu's
+  list is current. **Repair** prepares the affected options again or rewrites the list.
+- **Find the problem mod...**: when something goes wrong in game and you don't know which mod
+  causes it. Each round turns half of the suspects off; start the game, try to make the problem
+  happen, close the game, and answer. Mods found not to cause it stay on ("Cleared"). After a
+  few rounds it names the mod and leaves it off. Turning that mod off stops the problem, even if
+  it also needs another mod to happen. Mods that were already disabled are left alone. It can
+  wait while you play: the bar above the mod list continues it, also after the app was closed.
+- **Reinstall all**.
+
 ## Game log tab
 
 While the game runs, the app reads the in-game menu's log (`live_log.txt`) and UE4SS's log, and
@@ -118,6 +158,9 @@ When the game isn't running, the tab shows the last session (with the time it en
 picks **This session**, **Previous session** (`live_log_previous.txt`, the session before) or
 **UE4SS.log**; each is read through the same checks.
 
+Some problems have a button: **Choose texture...** / **Choose material...** (see above) or
+**Repair** for a prepared file that didn't load.
+
 **Copy problems** copies the list, with the log lines of each problem, for a bug report.
 Right-click the session log for **Copy shown lines**. The app only reads files; it never touches
 the running game. Switch it off in Setup ("Follow the game's logs while it runs").
@@ -130,6 +173,8 @@ the running game. Switch it off in Setup ("Follow the game's logs while it runs"
 | `Sandfall\Content\Paks_ModLibrary\` | Your mods as downloaded |
 | `Paks\~mods\_E33Wardrobe\` | Prepared mods (what the game loads) |
 | `ue4ss\Mods\E33Wardrobe\` | The in-game menu, its settings, logs and `report.txt` |
+| `ue4ss\Mods\E33Wardrobe\fixes.json`, `bundles\` | Your fixes (disabled mods, row edits, rules, bundled files) |
+| `Sandfall\Content\E33Wardrobe_Disabled\` | Prepared files of disabled mods |
 
 ## Problems
 

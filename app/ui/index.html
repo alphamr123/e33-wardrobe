@@ -16,7 +16,9 @@
     <span class="tb-sep"></span>
     <button class="btn tb" data-act="reinstall" data-needs-mod id="tb-reinstall" title="Prepare the selected mod again">Reinstall</button>
     <button class="btn tb" data-act="remove" data-needs-mod id="tb-remove" title="Remove the selected mod (Delete)">Remove</button>
-    <button class="btn tb" data-act="reinstall-all" id="tb-reinstall-all" title="Prepare every mod in the list again">Reinstall all</button>
+    <button class="btn tb" data-act="toggle-disabled" data-needs-mod id="tb-disable" title="Experimental: take the mod out of the game without removing it (picks are kept)">Disable</button>
+    <span class="tb-sep"></span>
+    <button class="btn tb drop" data-act="tools" id="tb-tools" title="Check &amp; repair, find the problem mod (both experimental), reinstall all">Tools</button>
     <span class="tb-sep"></span>
     <button class="btn tb" data-act="open-library" title="Open the mod library in Explorer">Open mods folder</button>
     <span class="tb-fill"></span>
@@ -35,6 +37,7 @@
     <!-- ================= Mods ================= -->
     <section class="page active" id="page-mods">
       <div class="notice" id="mods-notice" hidden></div>
+      <div class="notice" id="culprit-notice" hidden></div>
       <div class="split" id="mods-split">
         <div class="pane pane-left" id="mods-left">
           <div class="lv" id="modlist" tabindex="0">
@@ -68,6 +71,8 @@
           <div class="buttonbar" id="details-buttons">
             <button class="btn" data-act="reinstall-shown" id="btn-reinstall" title="Prepare this mod again">Reinstall</button>
             <button class="btn" data-act="remove-shown" id="btn-remove" title="Remove this mod">Remove...</button>
+            <button class="btn" data-act="disable-shown" id="btn-disable" title="Experimental: take this mod out of the game without removing it">Disable</button>
+            <button class="btn" data-act="edit-rows" id="btn-edit-rows" title="Experimental: rename, move, hide or order this mod's rows and options in the in-game menu">Edit rows...</button>
             <button class="btn" data-act="open-mod" data-needs-mod>Open folder</button>
           </div>
         </div>

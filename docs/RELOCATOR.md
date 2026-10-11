@@ -143,6 +143,27 @@ it either when the original mod is installed, so the reference is simply empty i
 relocator keeps such variants and prints a note naming the package. `--strict-imports` refuses
 them instead; use it to check whether a pak the mod page asks for is missing.
 
+## Edits and fixes (`fixes.json`)
+
+The app's fix tools (Edit rows, Disable, Choose texture, Choose material, Bundle) save their
+changes in `<UE4SS>\Mods\E33Wardrobe\fixes.json`. The relocator applies the file every time it
+writes `variants.lua`, so edits survive Reinstall:
+
+- **Edit rows**: row and option names, options moved to another row or a new one, hidden options
+  (still prepared, just not in the menu), order.
+- **Disabled** mods: their prepared folder sits in `Sandfall\Content\E33Wardrobe_Disabled\`
+  (outside `Paks`, so the game doesn't load it) and they're left out of the menu. Relocating a
+  disabled mod prepares it as usual and moves it back out; `--remove` deletes that copy too.
+- **Texture and material rules**: written into the variant's entry in `variants.lua`. The menu
+  uses them before its own guesses when a link or a material slot of the mod is empty.
+- **Bundles**: files copied from another mod into a small container under
+  `<UE4SS>\Mods\E33Wardrobe\bundles\`. The relocator treats it as part of the mod: links to
+  those files resolve while it unpacks the mod, and the files go into the mod's shared pak.
+  Bundled files are not reported as "two versions of one mod".
+
+Delete `fixes.json` to drop all edits; the next run (or Reload after the app rewrites the list)
+shows the mods as they come.
+
 ## Limits
 
 - Mods packed only as a legacy `.pak` (no `.utoc` / `.ucas`) can't be relocated yet; install

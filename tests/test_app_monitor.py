@@ -299,6 +299,31 @@ try:
     p = k.get('grey-slot:Sciel:?')
     check("  nothing to fill it with -> warn: that part shows grey", p and p['level'] == 'warn'
           and p['title'] == "An outfit part shows grey: the mod's mesh has no material for slot ?", p)
+    g.live(153, "  change BP_CharacterSkinBase_Lune_C_7 [Lune].Body: mat1 texture Color_MAIN: empty (the mod's material "
+                "points at a texture it doesn't have) -> /Game/Mods/ZW1/Lune_Body_Basecolor (the mod's own texture for it) "
+                "{fix:tex|Chic Set/Lune color/Black_P|/game/characters/lune/body/mi_body_lune|Color_MAIN}")
+    g.live(153, "  change BP_CharacterSkinBase_Sciel_C_5 [Sciel].Body: mat2 empty (the mod's mesh has no material for slot "
+                "extra) and nothing to fill it with {fix:mat|Bikini Set/Sciel/B_P|/game/mods/bikini/sk_sciel_bikini_b_skin|2|extra}")
+    g.live(153, "  change BP_CharacterSkinBase_Maelle_C_2 [Maelle].Body: mat0 texture Normal_MAIN: empty (the mod's material "
+                "points at a texture it doesn't have) -> /Game/X/T_N (the mod's own texture for it) {fix:tex|?|/game/x/mi_other|Normal_MAIN}")
+    g.live(153, 'pass (Altered Flower Suit: Main = on): 3 change(s)')
+    m.poll_once()
+    k, s = keys(m), m.snapshot()
+    p = k.get('empty-texture:Lune:Color_MAIN:Lune_Body_Basecolor')
+    check("the menu's {fix:tex|...} tag: the problem carries what Choose texture needs, the guess included",
+          p and p['fix'] == {'kind': 'texture', 'mod': 'Chic Set', 'variant': 'Chic Set/Lune color/Black_P',
+                             'material': '/game/characters/lune/body/mi_body_lune', 'param': 'Color_MAIN',
+                             'guess': '/Game/Mods/ZW1/Lune_Body_Basecolor'}, p and p.get('fix'))
+    check('  and nobody sees the tag: not in the problem, its lines or the tail',
+          not any('{fix:' in x for x in s['tail']) and not any('{fix:' in ln or '{fix:' in q['detail']
+                                                                for q in s['problems'] for ln in q['lines']), s['tail'][-5:])
+    p = k.get('grey-slot:Sciel:extra')
+    check("  {fix:mat|...}: mesh, slot index and name for Choose material", p and p['fix'] == {
+        'kind': 'material', 'mod': 'Bikini Set', 'variant': 'Bikini Set/Sciel/B_P', 'mesh': '/game/mods/bikini/sk_sciel_bikini_b_skin',
+        'slot': 2, 'slot_name': 'extra'}, p and p.get('fix'))
+    p = k.get('empty-texture:Maelle:Normal_MAIN:T_N')
+    check('  variant "?" (not a mod\'s material): no fix', p is not None and p['fix'] is None, p)
+    check('  problems without a tag have fix null', all('fix' in q for q in s['problems']))
     check('  a texture swapped for one named like it is not a problem',
           not any(any('T_New' in ln for ln in x['lines']) for x in k.values()), list(k))
     g.live(160, 'pass (after map load): 0 change(s) - nothing loaded needed changing')

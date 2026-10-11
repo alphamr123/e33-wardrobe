@@ -38,6 +38,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=['app', 'app.backend', 'app.backend.api', 'app.backend.paths', 'app.backend.archives',
                    'app.backend.library', 'app.backend.jobs', 'app.backend.monitor', 'app.backend.assets',
+                   'app.backend.fixes', 'app.backend.culprit', 'app.backend.repair', 'e33fixes',
                    'e33_relocate', 'e33common', 'e33legacy', 'e33utoc', 'e33tex', 'e33rules', 'py7zr'],
     excludes=['tkinter', 'unittest', 'pydoc', 'lupa', 'pytest', 'playwright'],
     noarchive=False,

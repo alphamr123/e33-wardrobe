@@ -36,6 +36,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import e33common  # noqa: E402
+import e33fixes  # noqa: E402
 import e33legacy  # noqa: E402
 import e33rules  # noqa: E402
 import e33tex  # noqa: E402
@@ -368,19 +369,21 @@ def build_shared(retoc, game_links, mod_root, work, out_dir, mod_name, ctx, log)
     """One pak with every mod-only package of the mod (paths the game doesn't have) at its
     original path, extracted from all of the mod's containers at once - independent of
     --only and of variants that failed. References between options (an outfit mesh using a
-    color/common pak's material) resolve through it; it overrides nothing in the game."""
+    color/common pak's material) resolve through it; it overrides nothing in the game.
+    Bundles (files copied from another mod, fixes.json) count as the mod's containers."""
     own, cand, flat = set(), set(), set()
-    for dp, _ds, fs in os.walk(mod_root):
-        for f in fs:
-            if f.lower().endswith('.utoc'):
-                try:
-                    p0 = os.path.join(dp, f)
-                    pk, fl, ow, _info = index_entries(ctx.get('fixed', {}).get(os.path.normcase(p0), p0))
-                except Exception:
-                    continue
-                own |= ow
-                flat |= fl
-                cand.update(p for p in pk if p.lower() not in ctx['game_pkgs'] and not p.lower().startswith('/game/mods/'))
+    sources = [os.path.join(dp, f) for dp, _ds, fs in os.walk(mod_root) for f in fs]
+    sources += ctx.get('bundles', [])
+    for p0 in sources:
+        if not p0.lower().endswith('.utoc'):
+            continue
+        try:
+            pk, fl, ow, _info = index_entries(ctx.get('fixed', {}).get(os.path.normcase(p0), p0))
+        except Exception:
+            continue
+        own |= ow
+        flat |= fl
+        cand.update(p for p in pk if p.lower() not in ctx['game_pkgs'] and not p.lower().startswith('/game/mods/'))
     if not cand and not flat:
         return None, []
     legacy = os.path.join(work, 'shared_legacy')
@@ -790,7 +793,8 @@ def relocate_variant(retoc, game_links, mod_root, rel, work, out_dir, variant_id
 # ------------------------------------------------------------------------------ Lua table
 
 def lua_quote(s):
-    return '"' + s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
+    out = s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+    return '"' + re.sub(r'[\x00-\x1f\x7f]', lambda m: f'\\{ord(m.group(0)):03d}', out) + '"'
 
 
 def write_variants_lua(path, mods):
@@ -808,12 +812,24 @@ def write_variants_lua(path, mods):
                     over = 'true' if cls.get('override', True) else 'false'
                     lines.append(f'        [{lua_quote(old)}] = {{ {lua_quote(new)}, {lua_quote(obj)}, '
                                  f'{lua_quote(cls.get("class") or "")}, {over} }},')
-                lines.append('      } },')
+                fix = v.get('fix') or {}
+                if fix:
+                    # rules from fixes.json (e33fixes): which texture / material an empty link gets
+                    lines.append('      }, fix = {')
+                    for kind in ('tex', 'mat'):
+                        if fix.get(kind):
+                            lines.append(f'        {kind} = {{')
+                            for k, val in sorted(fix[kind].items()):
+                                lines.append(f'          [{lua_quote(k)}] = {lua_quote(val)},')
+                            lines.append('        },')
+                    lines.append('      } },')
+                else:
+                    lines.append('      } },')
             lines.append('    } },')
         lines.append('  } },')
     lines.append('}')
     lines[0] += f' (version {e33common.VERSION})'
-    tmp = path + '.tmp'
+    tmp = e33fixes._tmp(path)
     with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(lines) + '\n')
     os.replace(tmp, path)
@@ -821,14 +837,16 @@ def write_variants_lua(path, mods):
 
 def shared_clashes(registry):
     """Mod-only paths that several mods' shared paks hold: {path: [mod names]}. PrimaryAssetLabels
-    (cook metadata such as /Game/chic_MyMod) do nothing in game and are left out."""
+    (cook metadata such as /Game/chic_MyMod) do nothing in game and are left out, and so are
+    files a mod bundled from another one (fixes.json)."""
     labels = {k.lower() for m in registry for sl in m.get('slots', []) for v in sl.get('variants', [])
               for k, c in (v.get('classes') or {}).items()
               if isinstance(c, dict) and c.get('class') == 'PrimaryAssetLabel'}
     clashes = {}
     for m in registry:
+        bundled = {b.lower() for b in m.get('bundled', [])}     # copied from the other mod on purpose
         for p in m.get('shared', []):
-            if p.lower() not in labels:
+            if p.lower() not in labels and p.lower() not in bundled:
                 clashes.setdefault(p, []).append(m['name'])
     return {p: n for p, n in clashes.items() if len(n) > 1}
 
@@ -848,8 +866,9 @@ def update_registry(path, mods_out, partial):
     for mod in mods_out:
         old = by_name.get(mod['name'])
         if partial and old:                      # --only: merge new variants into the existing slots
-            if 'shared' in mod:
-                old['shared'] = mod['shared']
+            for k in ('shared', 'bundled'):
+                if k in mod:
+                    old[k] = mod[k]
             slots = {s['id']: s for s in old['slots']}
             for s in mod['slots']:
                 tgt = slots.setdefault(s['id'], {**s, 'variants': []})
@@ -860,7 +879,7 @@ def update_registry(path, mods_out, partial):
         elif mod['slots']:
             by_name[mod['name']] = mod
     reg = [by_name[k] for k in sorted(by_name)]
-    tmp = path + '.tmp'
+    tmp = e33fixes._tmp(path)
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(reg, f, indent=1)
     os.replace(tmp, path)
@@ -869,8 +888,10 @@ def update_registry(path, mods_out, partial):
 
 # ------------------------------------------------------------------------------ main
 
-def remove_mods(names, out_root, lua_dir):
-    """--remove: take mods out of the wardrobe (registry, variants.lua, their relocated paks)."""
+def remove_mods(names, out_root, lua_dir, paks=None):
+    """--remove: take mods out of the wardrobe (registry, variants.lua, their relocated paks, a
+    disabled mod's parked copy). Edits in fixes.json are kept for when the mod comes back, except
+    "disabled"."""
     reg_path = os.path.join(lua_dir, 'wardrobe_registry.json') if lua_dir else None
     reg = []
     if reg_path and os.path.isfile(reg_path):
@@ -892,20 +913,31 @@ def remove_mods(names, out_root, lua_dir):
             reg.remove(m)
             outs = {os.path.dirname(v.get('output') or '') for sl in m.get('slots', [])
                     for v in sl.get('variants', []) if v.get('output')}
-            for d in outs | {os.path.join(out_root, safe_name(m['name']))}:
+            for d in outs:          # only its own folders (another mod may own safe_name(name))
                 if d and os.path.isdir(d) and os.path.normcase(os.path.abspath(d)).startswith(
                         os.path.normcase(os.path.abspath(out_root)) + os.sep):
                     shutil.rmtree(d, ignore_errors=True)
                     if os.path.isdir(d):
                         print(f'  could not delete {d} (is a file in it open?); delete it by hand')
+            if paks:
+                for d in outs:
+                    pd = os.path.join(e33fixes.disabled_root(paks), os.path.basename(d))
+                    if d and os.path.isdir(pd):
+                        shutil.rmtree(pd, ignore_errors=True)
+            if lua_dir:
+                fx = e33fixes.load(lua_dir)
+                e = e33fixes.entry(fx, m['name'], create=False)
+                if e and e.pop('disabled', None):
+                    e33fixes.save(lua_dir, fx)
             print(f'removed "{m["name"]}" from the wardrobe')
             gone += 1
     if gone and reg_path:
-        tmp = reg_path + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(reg, f, indent=1)
-        os.replace(tmp, reg_path)
-        write_variants_lua(os.path.join(lua_dir, 'Scripts', 'variants.lua'), reg)
+        with e33fixes.LOCK:
+            tmp = e33fixes._tmp(reg_path)
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(reg, f, indent=1)
+            os.replace(tmp, reg_path)
+            write_variants_lua(os.path.join(lua_dir, 'Scripts', 'variants.lua'), e33fixes.apply(reg, e33fixes.load(lua_dir)))
         print('In game: Settings > Reload (or Ctrl+F8) to update the menu.')
     return 0 if gone else 1
 
@@ -977,7 +1009,7 @@ def _main(argv, tee):
     if a.remove:
         if not a.from_legacy and e33common.game_running(fresh=True):
             raise SystemExit('The game is running. Close it first: its paks are locked while it runs.')
-        return remove_mods(a.remove, out_root, lua_dir)
+        return remove_mods(a.remove, out_root, lua_dir, a.paks)
     if a.save:
         cfg = dict(cfg, paks_dir=a.paks, **({'library': a.library} if a.library else {}),
                    **({'retoc': a.retoc} if a.retoc else {}))
@@ -1035,10 +1067,19 @@ def _main(argv, tee):
     tee.start(os.path.join(out_root, 'relocate_console.txt'), sys.argv[1:] if argv is None else list(argv))
     log = RunLog()
     log_paths = []
+    to_park = []                # (in ~mods, disabled folder) of disabled mods relocated in this run
+
+    def park():
+        while to_park:
+            src, dst = to_park.pop()
+            try:
+                e33fixes.move_dir(src, dst, aside=os.path.dirname(dst))
+            except OSError as e:
+                print(f'  WARNING: could not move {src} back to the disabled folder: {e}')
     ctx = {'used': set(), 'game_pkgs': set(), 'game_version': None, 'skeletons': a.skeletons,
            'physics': a.physics, 'chunks': set(), 'strict_imports': a.strict_imports, 'stems': {}}
     # The previous run's wardrobe: a variant that fails this time keeps its earlier build.
-    previous, other_mods = {}, set()
+    previous, other_mods, known_dirs = {}, set(), {}
     if lua_dir and os.path.isfile(os.path.join(lua_dir, 'wardrobe_registry.json')):
         try:
             with open(os.path.join(lua_dir, 'wardrobe_registry.json'), encoding='utf-8') as f:
@@ -1047,13 +1088,36 @@ def _main(argv, tee):
                     for sl in m.get('slots', []):
                         for v in sl.get('variants', []):
                             previous[v['id']] = (sl['id'], v)
+                            if v.get('output') and m['name'] not in known_dirs:
+                                known_dirs[m['name']] = os.path.basename(os.path.dirname(v['output'].replace('\\', os.sep)))
         except (OSError, ValueError, KeyError, TypeError):
-            previous = {}
-    # Output folder per mod: a mod whose cleaned name equals another mod's folder gets a hash.
-    taken = {safe_name(n).lower(): n for n in other_mods}
+            previous, known_dirs = {}, {}
+    # What the wardrobe already uses, so a run of one mod (or --only) never takes another
+    # variant's pak name, relocation path or shader chunk; each variant's own are freed just
+    # before it is relocated again (see the loop), so it keeps them.
+    prev_paths, prev_chunks = {}, {}
+    for vid, (_sid, v) in previous.items():
+        prev_paths[vid] = {str(x).lower() for x in (v.get('map') or {}).values()}
+        stem = os.path.basename(str(v.get('output') or ''))[:-5]
+        if stem:
+            ctx['stems'][stem.lower()] = vid
+            mc = re.fullmatch(r'pakchunk(\d+)-Windows_P', stem)
+            if mc:
+                prev_chunks[vid] = int(mc.group(1))
+    for paths_ in prev_paths.values():
+        ctx['used'] |= paths_
+    ctx['chunks'] |= set(prev_chunks.values())
+    # Output folder per mod: the folder it already has; a new mod whose cleaned name equals
+    # another mod's folder gets a hash (in a fixed order, so the result never changes).
+    taken = {d.lower(): n for n, d in known_dirs.items()}
+    for n in sorted(other_mods):
+        taken.setdefault(safe_name(n).lower(), n)
     mod_dirs = {}
     for m in a.mod:
         n = os.path.basename(m)
+        if n in known_dirs:
+            mod_dirs[n] = known_dirs[n]
+            continue
         d = safe_name(n)
         if taken.get(d.lower(), n) != n:
             d = f"{d}-{hashlib.sha1(n.encode('utf-8')).hexdigest()[:8]}"
@@ -1083,6 +1147,15 @@ def _main(argv, tee):
             # so assets a variant imports from a sibling or fix pak still resolve.
             siblings = []
             ctx['fixed'] = {}
+            ctx['bundles'] = e33fixes.bundle_utocs(lua_dir, mod_name) if lua_dir else []
+            parked = None
+            if lua_dir and a.paks and e33fixes.is_disabled(e33fixes.load(lua_dir), mod_name):
+                # a disabled mod is prepared in ~mods as usual and moved back out afterwards
+                parked = os.path.join(e33fixes.disabled_root(a.paks), mod_dirs[mod_name])
+                e33fixes.move_dir(parked, os.path.join(out_root, mod_dirs[mod_name]),
+                                  aside=e33fixes.disabled_root(a.paks))   # an old copy never stays in Paks
+                to_park.append((os.path.join(out_root, mod_dirs[mod_name]), parked))
+                print(f'  {mod_name} is disabled: it stays disabled after this run')
             if not a.from_legacy:
                 # Repair flat file indexes first (some paks list files without folders).
                 for dp, _ds, fs in os.walk(mod_root):
@@ -1100,7 +1173,7 @@ def _main(argv, tee):
                                       f'({len(names)} package(s) had no folder)')
                 for j, sib in enumerate(sorted(ctx['fixed'].get(os.path.normcase(os.path.join(dp, f)), os.path.join(dp, f))
                                                for dp, _ds, fs in os.walk(mod_root)
-                                               for f in fs if f.lower().endswith('.utoc'))):
+                                               for f in fs if f.lower().endswith('.utoc')) + ctx['bundles']):
                     try:
                         siblings += add_to_composite(sib, game_links, f'zzy_sibling_{j}_500_P', ctx['game_version'])
                     except VersionMismatch as e:
@@ -1119,6 +1192,8 @@ def _main(argv, tee):
                         continue
                     vid = f'{mod_name}/{opt["rel"]}'
                     print(f'[{mod_name}] {opt["rel"]} ...', flush=True)
+                    ctx['used'] -= prev_paths.get(vid, set())         # its own earlier paths are free again
+                    ctx['chunks'].discard(prev_chunks.get(vid))
                     try:
                         res, err = relocate_variant(retoc, game_links, mod_root, opt['rel'], work,
                                                     os.path.join(out_root, mod_dirs[mod_name]),
@@ -1161,6 +1236,9 @@ def _main(argv, tee):
                 if shared:
                     report[f'{mod_name}/(shared)'] = {'output': shared, 'packages': shared_pk}
                     mod_entry['shared'] = shared_pk
+                    bundled = e33fixes.bundled_packages(lua_dir, mod_name) if lua_dir else []
+                    if bundled:
+                        mod_entry['bundled'] = bundled
                     print(f'  shared pak: {len(shared_pk)} mod-only asset(s) at their original paths')
             except Exception as e:      # shared pak is an add-on; keep the variants
                 print(f'  WARNING: shared pak failed: {e}')
@@ -1191,6 +1269,10 @@ def _main(argv, tee):
                     os.remove(d)
                 except OSError:
                     pass
+    except BaseException:
+        log.close()             # relocate_log.txt is inside the folder that moves
+        park()                  # a failed run leaves disabled mods disabled
+        raise
     finally:
         log.close()
         lock.close()
@@ -1201,8 +1283,18 @@ def _main(argv, tee):
     run_mods = {os.path.basename(os.path.normpath(m)) for m in a.mod}
     for mname in run_mods:
         mine = {k: v for k, v in report.items() if k.startswith(mname + '/')}
-        os.makedirs(os.path.join(out_root, mod_dirs[mname]), exist_ok=True)
-        write_json(os.path.join(out_root, mod_dirs[mname], 'relocate_report.json'), mine)
+        mine_path = os.path.join(out_root, mod_dirs[mname], 'relocate_report.json')
+        os.makedirs(os.path.dirname(mine_path), exist_ok=True)
+        if a.only:                  # a repair of some options keeps the others' entries
+            try:
+                with open(mine_path, encoding='utf-8') as f:
+                    old = json.load(f)
+                if isinstance(old, dict):
+                    mine = {**old, **mine}
+            except (OSError, ValueError):
+                pass
+        write_json(mine_path, mine)
+    park()
     merged = {}
     try:
         with open(os.path.join(out_root, 'relocate_report.json'), encoding='utf-8') as f:
@@ -1223,13 +1315,15 @@ def _main(argv, tee):
             n = install_lua(LUA_TEMPLATE, lua_dir)
             if n:
                 print(f'Lua mod: {n} file(s) installed or updated')
-        registry = update_registry(os.path.join(lua_dir, 'wardrobe_registry.json'), mods_out, bool(a.only))
+        with e33fixes.LOCK:
+            registry = update_registry(os.path.join(lua_dir, 'wardrobe_registry.json'), mods_out, bool(a.only))
+            write_variants_lua(os.path.join(lua_dir, 'Scripts', 'variants.lua'),
+                               e33fixes.apply(registry, e33fixes.load(lua_dir)))
         dup = shared_clashes(registry)
         if dup:
             p, n = next(iter(dup.items()))
             print(f'WARNING: {len(dup)} mod-only asset path(s) exist in several mods\' shared paks '
                   f'(e.g. {p}: {", ".join(n)}). Two versions of one mod? Keep only one in the library.')
-        write_variants_lua(os.path.join(lua_dir, 'Scripts', 'variants.lua'), registry)
         print('Lua mod written to', lua_dir, f'({len(registry)} mod(s) in the wardrobe)')
     print('Relocated paks in', out_root)
     print('Report (all mods):', os.path.join(out_root, 'relocate_report.json'))

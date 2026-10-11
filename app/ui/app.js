@@ -190,6 +190,7 @@
     S.checked.forEach(id => { if (!modById(id)) S.checked.delete(id); });
     renderAll();
     if (S.selected !== null) loadDetails(S.selected);
+    loadCulprit();
   }
 
   async function loadDetails(id) {
@@ -352,8 +353,19 @@
     const shown = !!m && m.state !== 'working';
     if (rb) { rb.textContent = m && m.state === 'not_installed' ? 'Install' : 'Reinstall'; rb.disabled = !shown; }
     if (xb) xb.disabled = !shown;
-    const all = $('#tb-reinstall-all');
-    if (all) all.disabled = !S.mods.some(x => x.state !== 'working');
+    // Disable / Enable: ticked mods, else the selected one; the details button: the shown one
+    const dis = $('#tb-disable');
+    if (dis) {
+      const list = (n ? many : [m]).filter(x => x && (x.state === 'ready' || x.state === 'disabled'));
+      const allOff = list.length > 0 && list.every(x => x.state === 'disabled');
+      dis.textContent = n ? `${allOff ? 'Enable' : 'Disable'} selected (${n})` : allOff ? 'Enable' : 'Disable';
+      dis.disabled = !list.length;
+      dis.title = allOff ? 'Experimental: put it back into the game' : 'Experimental: take it out of the game without removing it (picks are kept)';
+    }
+    const db = $('#btn-disable'), eb = $('#btn-edit-rows');
+    const inMenu = !!m && (m.state === 'ready' || m.state === 'disabled');
+    if (db) { db.textContent = m && m.state === 'disabled' ? 'Enable' : 'Disable'; db.disabled = !inMenu; }
+    if (eb) eb.disabled = !inMenu;
   }
 
   // ------------------------------------------------------------------ rendering: mod list
@@ -362,6 +374,7 @@
     not_installed: ['off', 'Not installed'],
     working: ['run', 'Working'],
     failed: ['bad', 'Failed'],
+    disabled: ['dis', 'Disabled'],
   };
   const stateInfo = s => STATES[s] || ['off', str(s) || 'Unknown'];
 
@@ -401,7 +414,8 @@
       const repl = arr(m.replaces).join(', ');
       const notes = num(m.notes);
       const on = S.checked.has(m.id);
-      const rowCls = [m.id === S.selected ? 'sel' : '', on ? 'chk' : '', m.state === 'not_installed' ? 'off' : ''].join(' ').trim();
+      const rowCls = [m.id === S.selected ? 'sel' : '', on ? 'chk' : '', m.state === 'not_installed' ? 'off' : '',
+        m.state === 'disabled' ? 'dis' : ''].join(' ').trim();
       return `<tr data-id="${esc(m.id)}"${rowCls ? ` class="${rowCls}"` : ''}>`
         + `<td class="chk-cell"><input type="checkbox" tabindex="-1" data-chk${on ? ' checked' : ''} title="Select for Reinstall / Remove"></td>`
         + `<td title="${esc(name)}">${esc(name)}</td>`
@@ -504,13 +518,17 @@
       + `<span class="k">Size</span><span class="v selectable">${esc(fmtSize(info.size || m.size)) || '-'}</span>`
       + `<span class="k">Skin</span><span class="v selectable">${skinHas ? 'Own body textures' : "Game's own"}</span>`
       + (folder ? `<span class="k">Folder</span><span class="v wide selectable" data-copy-path="${esc(folder)}" title="${esc(folder)}">${esc(folder)}</span>` : '')
-      + `</div></div>`;
+      + `</div>`
+      + ((info.state || m.state) === 'disabled' ? '<div class="d-banner"><span class="sq dis"></span><span>Disabled: the game doesn\'t load it. '
+        + 'Your picks are kept.</span><span class="tb-fill"></span><button class="btn small" data-act="disable-shown">Enable</button></div>' : '')
+      + `</div>`;
 
     if (!d) {
       h += `<div class="details-empty">Reading details...</div>`;
     } else if (d.error) {
       h += `<div class="error-line"><span class="ico small error"></span><span>${esc(d.error)}</span></div>`;
     } else {
+      h += renderFixesGroup(d);
       h += renderRowsGroup(d, rows);
       h += renderSkinGroup(d);
       h += renderNotesGroup(d);
@@ -606,11 +624,35 @@
       parts.push(`<div class="od-sub">Missing files linked from ${esc(x.name)} `
         + `<span class="muted selectable">(${esc(x.in)})</span>${xlist(`${key}|miss|${i}`, x.names, 'missing file', true)}</div>`);
     });
+    // fixes for the missing links: a texture rule for a material, or bundling the file from another mod
+    const fixBtns = [];
+    arr(o.missing).map(obj).forEach((x, i) => {
+      if (x.texture) fixBtns.push(`<button class="btn small" data-tex-rule="${i}" title="Pick which texture fills the empty link in ${esc(x.name)}">Choose texture for ${esc(x.name)}...</button>`);
+      const src = obj(arr(x.found_in)[0]);
+      if (src.mod) fixBtns.push(`<button class="btn small" data-bundle="${i}" title="Copy ${esc(leafOf(src.package))} from ${esc(src.mod)}">Bundle it from ${esc(src.mod)}...</button>`);
+    });
+    arr(o.rules).map(obj).forEach(rl => {
+      const [what, slot] = [str(rl.key).split('|')[0], str(rl.key).split('|').pop()];
+      const val = rl.value === 'game' ? "the game's own texture" : rl.value === 'body' ? "the body's own material" : rl.value === 'hide' ? 'nothing (hidden)' : leafOf(rl.value);
+      parts.push(`<div class="od-line"><span class="ico small ok"></span><span class="selectable">Rule: ${rl.kind === 'texture'
+        ? `${slot === '*' ? 'empty texture links' : esc(slot)} in ${esc(leafOf(what))} ${slot === '*' ? 'use' : 'uses'} ${esc(val)}` : `slot ${esc(slot)} of ${esc(leafOf(what))} shows ${esc(val)}`}.</span></div>`);
+    });
+    if (fixBtns.length) parts.push(`<div class="pd-actions">${fixBtns.join('')}</div>`);
     const files = arr(o.files).map(obj);
     if (files.length) {
       parts.push(`<div class="od-sub">${xlist(key + '|files', files.map(f => `${f.type}: ${f.path}${f.game ? '  (replaces a game file)' : ''}`), 'file', true)}</div>`);
     }
     return parts.join('');
+  }
+
+  function renderFixesGroup(d) {
+    const fx = arr(d.fixes).map(obj);
+    if (!fx.length) return '';
+    const li = fx.map((f, i) => `<li><span class="kind">${esc(f.kind)}</span><span class="what selectable"><span>${esc(f.text)}</span>`
+      + `${f.sub ? `<br><span class="sub">${esc(f.sub)}</span>` : ''}</span><button class="btn small" data-undo="${i}">Undo</button></li>`).join('');
+    return `<fieldset class="gb" id="gb-fixes"><legend>Fixes (experimental)</legend><ul class="fixes">${li}</ul>`
+      + '<div class="fix-foot"><span class="muted">Kept when you reinstall. Your downloads are not changed. Press Reload in the in-game menu after a change.</span>'
+      + (fx.length > 1 ? '<button class="btn small" data-act="undo-all-fixes">Undo all</button>' : '') + '</div></fieldset>';
   }
 
   function renderSkinGroup(d) {
@@ -633,7 +675,8 @@
     return h + '<ul class="lines">' + notes.map((n, i) =>
       `<li data-note="${i}"><span class="ico small ${n.level === 'warn' ? 'warn' : n.level === 'error' ? 'error' : 'info'}"></span>`
       + `<span class="ln-body"><span class="selectable">${esc(n.text)}</span>`
-      + xlist(`${d.id}|note|${i}`, n.items, n.what === 'files' ? 'file' : 'option', n.what === 'files') + '</span></li>'
+      + xlist(`${d.id}|note|${i}`, n.items, n.what === 'files' ? 'file' : 'option', n.what === 'files')
+      + (n.compare ? `<button class="btn small inline-btn" data-compare="${esc(n.compare)}">Compare...</button>` : '') + '</span></li>'
     ).join('') + '</ul></fieldset>';
   }
 
@@ -1010,6 +1053,7 @@
       const when = sel.first && sel.last && sel.first !== sel.last ? `${sel.first} to ${sel.last}` : `${sel.first || sel.last || ''}`;
       pd.innerHTML = `<div class="pd-head"><span class="pd-title">${esc(sel.title)}</span>`
         + `<span class="pd-when">${esc(when)}${cnt > 1 ? `, ${cnt} times` : ''}</span></div>`
+        + problemActions(sel)
         + (sel.detail ? `<div>${esc(sel.detail)}</div>` : '')
         + (sel.hint ? `<div class="pd-hint"><span class="muted">What to do:</span> ${esc(sel.hint)}</div>` : '');
       pd.classList.add('selectable');
@@ -1145,16 +1189,21 @@
   // ------------------------------------------------------------------ dialogs
   let modal = null;
   /** A small classic modal. buttons: [{label, value, default, cancel}]. Resolves {value, form}. */
-  function dialog({ title, icon, html, buttons, wide }) {
+  /** A small classic modal. buttons: [{label, value, default, cancel, disabled}]. Resolves {value, form}.
+      cls: size class (w560...); foot: a note left of the buttons; onOpen(layer); onClick(e, layer) for
+      the dialog's own content; onKey(e) -> true when handled; onButton(b, layer) (async) -> false keeps
+      the dialog open (e.g. an error to show). */
+  function dialog({ title, icon, html, buttons, wide, cls, foot, onOpen, onClick, onKey, onButton }) {
     if (modal) modal.finish(null);
     hideCtx();
     return new Promise(resolve => {
       const layer = $('#modal-layer');
       const prevFocus = document.activeElement;
-      layer.innerHTML = `<div class="dlg${wide ? ' wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">`
+      layer.innerHTML = `<div class="dlg${wide ? ' wide' : ''}${cls ? ' ' + cls : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">`
         + `<div class="dlg-title"><span>${esc(title)}</span><button class="dlg-x" data-close title="Close" aria-label="Close"></button></div>`
         + `<div class="dlg-body">${icon ? `<span class="ico ${icon}"></span>` : ''}<div class="dlg-msg">${html}</div></div>`
-        + `<div class="dlg-buttons">${buttons.map((b, i) => `<button class="btn${b.default ? ' default' : ''}" data-i="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
+        + `<div class="dlg-buttons">${foot ? `<span class="dlg-foot-note">${foot}</span>` : ''}`
+        + `${buttons.map((b, i) => `<button class="btn${b.default ? ' default' : ''}" data-i="${i}"${b.disabled ? ' disabled' : ''}>${esc(b.label)}</button>`).join('')}</div></div>`;
       layer.hidden = false;
       const finish = b => {
         const form = {};
@@ -1172,16 +1221,38 @@
       };
       const cancelBtn = buttons.find(b => b.cancel) || null;
       const defBtn = buttons.find(b => b.default) || buttons[0];
-      modal = { finish, cancel: () => finish(cancelBtn), accept: () => finish(defBtn) };
+      let pressing = false;
+      const press = async b => {
+        if (!b) { finish(null); return; }
+        const el = layer.querySelector(`.dlg-buttons [data-i="${buttons.indexOf(b)}"]`);
+        if (el && el.disabled) return;
+        if (onButton && !b.cancel) {
+          if (pressing) return;
+          pressing = true;
+          const btns = $$('.dlg-buttons .btn', layer);
+          const was = btns.map(x => x.disabled);
+          btns.forEach(x => { x.disabled = true; });
+          let keep = false;
+          try { keep = (await onButton(b, layer)) === false; } finally {
+            pressing = false;
+            if (modal && modal.layer === layer) btns.forEach((x, i) => { x.disabled = was[i]; });
+          }
+          if (keep) return;
+        }
+        if (modal && modal.layer === layer) finish(b);
+      };
+      modal = { finish, layer, onKey, cancel: () => finish(cancelBtn), accept: () => press(defBtn) };
       layer.onclick = e => {
         const link = e.target.closest('[data-link]');
         if (link) { openUrl(link.dataset.link); return; }
         if (e.target.closest('[data-close]')) { modal.cancel(); return; }
-        const t = e.target.closest('[data-i]');
-        if (t) finish(buttons[+t.dataset.i]);
+        const t = e.target.closest('.dlg-buttons [data-i]');
+        if (t) { press(buttons[+t.dataset.i]); return; }
+        if (onClick) onClick(e, layer);
       };
-      const def = layer.querySelector('.btn.default') || layer.querySelector('.dlg-buttons .btn');
-      if (def) def.focus();
+      if (onOpen) onOpen(layer);
+      const def = layer.querySelector('.btn.default:not(:disabled)') || layer.querySelector('.dlg-buttons .btn:not(:disabled)');
+      if (def && !layer.contains(document.activeElement)) def.focus();
     });
   }
 
@@ -1487,6 +1558,595 @@
     openViewer(d, 0, Object.assign({ where: `${rowLabel(row, isMulti(d.rows))} · ${str(o.label)}` }, im));
   }
 
+  // ------------------------------------------------------------------ fixing tools (1.3)
+  const RELOAD = 'Press Reload in the in-game menu to see it.';
+  /** "Row · Option" of a variant id, from the loaded details when possible. */
+  function optName(variant) {
+    const mod = str(variant).split('/')[0];
+    const d = S.details[mod];
+    for (const r of arr(d && d.rows)) for (const o of arr(r.options)) if (o.id === variant) return `${rowLabel(r, isMulti(d.rows))} · ${str(o.label)}`;
+    return str(variant).split('/').slice(1).map(x => x.replace(/_P$/, '').replace(/_/g, ' ')).join(' · ');
+  }
+
+  /** Disable (on) or enable mods, one after the other. */
+  async function setDisabled(ids, on) {
+    const done = [], errs = [];
+    for (const id of ids) {
+      const r = await call('set_disabled', id, on);
+      if (!r || isFail(r)) errs.push(`${id}: ${str(r && r.error) || 'no answer'}`); else done.push(id);
+    }
+    await refreshAll();
+    if (errs.length) setMsg(errs.join(' '), 'error');
+    else setMsg(`${on ? 'Disabled' : 'Enabled'} ${done.length === 1 ? done[0] : plural(done.length, 'mod')}. ${RELOAD}`);
+  }
+  function toggleDisabled(list) {
+    list = list.filter(x => x && (x.state === 'ready' || x.state === 'disabled'));
+    if (!list.length) { setMsg('Only installed mods can be disabled.'); return; }
+    setDisabled(list.map(x => x.id), !list.every(x => x.state === 'disabled'));
+  }
+
+  function toolsMenu() {
+    const b = $('#tb-tools').getBoundingClientRect();
+    showCtx(b.left, b.bottom + 1, [
+      { label: 'Check & repair... (experimental)', run: openRepair },
+      { label: 'Find the problem mod... (experimental)', run: openCulprit },
+      '-',
+      { label: 'Reinstall all', disabled: !S.mods.some(x => x.state !== 'working'), run: reinstallAll },
+    ]);
+  }
+
+  // -- Edit rows: a tree of rows and options; rename, new row, move, order, hide
+  async function openEditRows(id) {
+    const r = await call('rows_editor', id);
+    if (showError(r, 'Edit rows')) return;
+    const clone = rows => arr(rows).map(x => Object.assign({}, x, { options: arr(x.options).map(o => Object.assign({}, o)) }));
+    const defaults = clone(r.defaults);
+    const model = clone(r.rows);
+    const ed = { r: model.length ? 0 : -1, o: -1, renaming: false };
+    const labelOf = rid => str((defaults.find(x => x.id === rid) || model.find(x => x.id === rid) || {}).label);
+    const cur = () => (ed.r >= 0 ? (ed.o >= 0 ? model[ed.r].options[ed.o] : model[ed.r]) : null);
+    let nextNew = 1 + Math.max(0, ...model.map(x => num((/\/\+(\d+)$/.exec(str(x.id)) || [])[1])));
+    const marks = (item, row) => {
+      const m = [];
+      if (item === row) {
+        if (row.new) m.push('new row');
+        else if (item.default && item.label !== item.default) m.push(`was ${item.default}`);
+      } else {
+        if (item.default && item.label !== item.default) m.push(`was ${item.default}`);
+        if (item.home && item.home !== row.id) m.push(`moved from ${labelOf(item.home)}`);
+        if (item.hidden) m.push('hidden');
+      }
+      return m;
+    };
+    const draw = layer => {
+      const tree = $('#ed-tree', layer);
+      const top = tree.scrollTop;
+      tree.innerHTML = model.map((row, i) => {
+        const rm = marks(row, row);
+        const sel = ed.r === i && ed.o < 0;
+        const lbl = sel && ed.renaming ? `<input class="field" id="ed-name" value="${esc(row.label)}" spellcheck="false">`
+          : `<span class="lbl${rm.length ? ' edited' : ''}" title="${esc(row.label)}">${esc(row.label)}</span>`;
+        return `<div class="tn row${sel ? ' sel' : ''}" data-r="${i}"><span class="xbox">−</span>${rm.length ? '<span class="dot"></span>' : ''}${lbl}`
+          + `${rm.length ? `<span class="mark">(${esc(rm.join(', '))})</span>` : ''}</div>`
+          + row.options.map((o, j) => {
+            const om = marks(o, row);
+            const osel = ed.r === i && ed.o === j;
+            const ol = osel && ed.renaming ? `<input class="field" id="ed-name" value="${esc(o.label)}" spellcheck="false">`
+              : `<span class="lbl${om.some(x => x !== 'hidden') ? ' edited' : ''}" title="${esc(o.label)}">${esc(o.label)}</span>`;
+            return `<div class="tn l1${osel ? ' sel' : ''}${o.hidden ? ' hid' : ''}" data-r="${i}" data-o="${j}"><span class="spacer"></span>`
+              + `${om.some(x => x !== 'hidden') ? '<span class="dot"></span>' : ''}${ol}${om.length ? `<span class="mark">(${esc(om.join(', '))})</span>` : ''}</div>`;
+          }).join('');
+      }).join('') || '<div class="tn muted">This mod has no rows in the menu.</div>';
+      tree.scrollTop = top;
+      const c = cur(), isOpt = ed.o >= 0;
+      const set = (k, on, text) => { const b = $(`[data-ed="${k}"]`, layer); if (b) { b.disabled = !on; if (text) b.textContent = text; } };
+      set('rename', !!c); set('newrow', true); set('move', isOpt && model.length > 1);
+      set('up', !!c && (isOpt ? ed.o > 0 : ed.r > 0));
+      set('down', !!c && (isOpt ? ed.o < model[ed.r].options.length - 1 : ed.r < model.length - 1));
+      set('hide', isOpt, isOpt && c.hidden ? 'Show' : 'Hide');
+      const name = $('#ed-name', layer);
+      if (name) { name.focus(); name.select(); }
+    };
+    const commit = layer => {
+      const name = $('#ed-name', layer);
+      if (ed.renaming && name) { const c = cur(); const v = name.value.trim(); if (c && v) c.label = v; }
+      ed.renaming = false;
+    };
+    const move = (layer, d) => {
+      commit(layer);
+      if (ed.o >= 0) {
+        const opts = model[ed.r].options, j = ed.o + d;
+        if (j < 0 || j >= opts.length) return;
+        [opts[ed.o], opts[j]] = [opts[j], opts[ed.o]];
+        ed.o = j;
+      } else {
+        const j = ed.r + d;
+        if (j < 0 || j >= model.length) return;
+        [model[ed.r], model[j]] = [model[j], model[ed.r]];
+        ed.r = j;
+      }
+      draw(layer);
+    };
+    const html = `<p>Rows and option names as the in-game menu shows them. Changes show after Reload in the menu.</p>`
+      + '<div class="editor"><div class="tree-lv" id="ed-tree" tabindex="0"></div><div class="side-btns">'
+      + '<button class="btn" data-ed="rename" title="Rename (F2)">Rename...</button><button class="btn" data-ed="newrow">New row...</button>'
+      + '<button class="btn" data-ed="move">Move to row ▸</button><span class="gap"></span>'
+      + '<button class="btn" data-ed="up">Move up</button><button class="btn" data-ed="down">Move down</button><span class="gap"></span>'
+      + '<button class="btn" data-ed="hide">Hide</button><span class="gap"></span>'
+      + '<button class="btn" data-ed="reset" title="Back to the rows the mod comes with">Reset all</button></div></div>'
+      + '<div class="dlg-err" id="ed-err" hidden></div>';
+    await dialog({
+      title: `Edit rows: ${id} (experimental)`, cls: 'w560', html,
+      foot: 'Changes are saved for this mod and kept when you reinstall.',
+      buttons: [{ label: 'OK', value: 'ok', default: true }, { label: 'Cancel', value: null, cancel: true }],
+      onOpen: layer => draw(layer),
+      onClick: (e, layer) => {
+        if (e.target.id === 'ed-name') return;
+        const tn = e.target.closest('.tn[data-r]');
+        if (tn) {
+          commit(layer);
+          const r2 = +tn.dataset.r, o2 = tn.dataset.o === undefined ? -1 : +tn.dataset.o;
+          const again = ed.r === r2 && ed.o === o2 && e.detail >= 2;
+          ed.r = r2; ed.o = o2; ed.renaming = again;
+          draw(layer);
+          if (!again) $('#ed-tree', layer).focus();
+          return;
+        }
+        const b = e.target.closest('[data-ed]');
+        if (!b || b.disabled) return;
+        const k = b.dataset.ed;
+        if (k === 'rename') { ed.renaming = true; draw(layer); }
+        else if (k === 'newrow') {
+          commit(layer);
+          const base = model[ed.r] || {};
+          const row = { id: `${id}/+${nextNew++}`, label: 'New row', default: null, character: base.character || null, new: true, options: [] };
+          model.splice(ed.r + 1, 0, row);
+          ed.r += 1; ed.o = -1; ed.renaming = true;
+          draw(layer);
+        } else if (k === 'move') {
+          commit(layer);
+          const br = b.getBoundingClientRect();
+          const homeRow = model.find(x => x.id === cur().home) || defaults.find(x => x.id === cur().home) || model[ed.r];
+          const oc = homeRow && homeRow.character;
+          const other = row => !!(oc && row.character && row.character !== oc);
+          showCtx(br.right, br.top, model.map((row, i) => ({ label: row.label + (other(row) ? ` (${row.character} only)` : ''),
+            disabled: i === ed.r || other(row), run: () => {
+            const [o] = model[ed.r].options.splice(ed.o, 1);
+            row.options.push(o);
+            ed.r = i; ed.o = row.options.length - 1;
+            draw(layer);
+          } })));
+        } else if (k === 'up' || k === 'down') move(layer, k === 'up' ? -1 : 1);
+        else if (k === 'hide') { commit(layer); const c = cur(); c.hidden = !c.hidden; draw(layer); }
+        else if (k === 'reset') {
+          model.splice(0, model.length, ...clone(defaults).map(x => Object.assign(x, { default: x.label, new: false,
+            options: x.options.map(o => Object.assign(o, { default: o.label, home: x.id, hidden: false })) })));
+          ed.r = model.length ? 0 : -1; ed.o = -1; ed.renaming = false;
+          draw(layer);
+        }
+      },
+      onKey: e => {
+        const layer = $('#modal-layer');
+        if (ed.renaming && document.activeElement && document.activeElement.id === 'ed-name') {
+          if (e.key === 'Enter') { e.preventDefault(); commit(layer); draw(layer); $('#ed-tree', layer).focus(); return true; }
+          if (e.key === 'Escape') { e.preventDefault(); ed.renaming = false; draw(layer); $('#ed-tree', layer).focus(); return true; }
+          return true;
+        }
+        if (document.activeElement && document.activeElement.id === 'ed-tree') {
+          const flat = [];
+          model.forEach((row, i) => { flat.push([i, -1]); row.options.forEach((_o, j) => flat.push([i, j])); });
+          const at = flat.findIndex(([a, b]) => a === ed.r && b === ed.o);
+          const d = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+          if (d && flat.length) { e.preventDefault(); [ed.r, ed.o] = flat[Math.max(0, Math.min(flat.length - 1, at + d))]; draw(layer); return true; }
+          if (e.key === 'F2' && cur()) { e.preventDefault(); ed.renaming = true; draw(layer); return true; }
+        }
+        return false;
+      },
+      onButton: async (b, layer) => {
+        commit(layer);
+        const res = await call('save_rows', id, { rows: model.map(row => ({ id: row.id, label: row.label, new: !!row.new, character: row.character,
+          options: row.options.map(o => ({ id: o.id, label: o.label, hidden: !!o.hidden })) })) });
+        if (!res || isFail(res)) { const er = $('#ed-err', layer); er.hidden = false; er.textContent = str(res && res.error) || 'No answer.'; return false; }
+        setMsg(`Saved the rows of ${id}. ${RELOAD}`);
+        S.details = {};
+        await refreshAll();
+        return true;
+      },
+    });
+  }
+
+  // -- Check & repair
+  async function openRepair() {
+    let res = null;
+    const picked = new Set();
+    let sel = 0;
+    const draw = layer => {
+      const box = $('#rp-body', layer);
+      if (!res) { box.innerHTML = '<div class="summary-line"><span class="pbar busy"><i></i></span><span>Checking...</span></div>'; return; }
+      if (isFail(res)) { box.innerHTML = errorLine(str(res.error)); return; }
+      const probs = arr(res.problems).map(obj);
+      let h = '<div class="summary-line"><span class="pbar done"><i style="width:100%"></i></span><span>Done</span></div>'
+        + `<p><b>Checked ${plural(num(res.mods), 'mod')}, ${plural(num(res.options), 'option')}: ${probs.length ? plural(probs.length, 'problem') : 'no problems'}.</b></p>`;
+      if (probs.length) {
+        h += '<div class="lv" style="height:124px"><table><colgroup><col style="width:24px"><col style="width:24px"><col style="width:200px">'
+          + '<col style="width:216px"><col></colgroup><thead><tr><th class="chk-cell"></th><th></th><th>Mod · option</th><th>Problem</th>'
+          + '<th>Repair will</th></tr></thead><tbody>' + probs.map((p, i) =>
+          `<tr data-rp="${i}"${i === sel ? ' class="sel"' : ''}><td class="chk-cell"><input type="checkbox" data-rpc="${i}"${picked.has(p.id) ? ' checked' : ''}${p.action ? '' : ' disabled'}></td>`
+          + `<td class="ico-cell"><span class="ico small ${SEV[p.level] || 'info'}"></span></td><td title="${esc(p.where)}">${esc(p.where)}</td>`
+          + `<td title="${esc(p.problem)}">${esc(p.problem)}</td><td title="${esc(p.repair)}">${esc(p.repair)}</td></tr>`).join('') + '</tbody></table></div>';
+        const p = probs[sel] || probs[0];
+        h += `<div class="problem-detail sunken selectable" style="height:auto;margin:0"><div class="pd-head"><span class="pd-title">${esc(p.where)}: ${esc(str(p.problem).toLowerCase())}</span></div>`
+          + `<div>${esc(p.detail)}</div></div>`;
+      }
+      h += '<p class="dlg-note">Repair never changes your downloads in the library. It only rebuilds what the app made.</p>';
+      box.innerHTML = h;
+      const n = probs.filter(p => picked.has(p.id)).length;
+      const btn = layer.querySelector('.dlg-buttons [data-i="0"]');
+      btn.textContent = n ? `Repair ${n}` : 'Repair';
+      btn.disabled = !n;
+      if (n && !layer.querySelector('.lv').contains(document.activeElement)) btn.focus();
+    };
+    const check = async layer => {
+      res = await call('check_mods');
+      res = res || { ok: false, error: 'No answer.' };
+      arr(res.problems).forEach(p => { if (p.action) picked.add(p.id); });
+      if (modal && modal.layer === layer) draw(layer);
+    };
+    await dialog({
+      title: 'Check mods', cls: 'w720', html: '<div id="rp-body"></div>',
+      buttons: [{ label: 'Repair', value: 'repair', default: true, disabled: true }, { label: 'Close', value: null, cancel: true }],
+      onOpen: layer => { draw(layer); check(layer); },
+      onClick: (e, layer) => {
+        const c = e.target.closest('[data-rpc]');
+        const probs = arr(res && res.problems);
+        if (c) { const p = probs[+c.dataset.rpc]; if (c.checked) picked.add(p.id); else picked.delete(p.id); draw(layer); return; }
+        const tr = e.target.closest('[data-rp]');
+        if (tr) { sel = +tr.dataset.rp; draw(layer); }
+      },
+      onButton: async () => {
+        const ids = arr(res && res.problems).filter(p => picked.has(p.id)).map(p => p.id);
+        const r = await call('repair', ids);
+        if (showError(r, 'Repair')) return true;
+        const n = arr(r.jobs).length;
+        setMsg(`Repairing: ${n ? plural(n, 'task') + ' in the list' : ''}${n && r.menu ? ', and ' : ''}${r.menu ? "the menu's list was written again" : ''}. ${RELOAD}`);
+        pollFast();
+        return true;
+      },
+    });
+  }
+
+  // -- Two versions of one mod? Compare and remove one
+  async function openCompare(a, b) {
+    const r = await call('compare_mods', a, b);
+    if (showError(r, 'Compare')) return;
+    const [x, y] = arr(r.mods).map(obj);
+    const vkey = v => str(v).split(/[.\-]/).map(n => num(n));
+    const newer = (() => {
+      const vx = vkey(x.version), vy = vkey(y.version);
+      for (let i = 0; i < Math.max(vx.length, vy.length); i++) { if ((vx[i] || 0) !== (vy[i] || 0)) return (vx[i] || 0) > (vy[i] || 0) ? 0 : 1; }
+      return str(x.added) >= str(y.added) ? 0 : 1;
+    })();
+    let keep = newer;
+    const col = (m, i, k) => `<div class="${i === keep ? 'keep' : ''}${k ? ' ' + k : ''}">`;
+    const row = (label, f) => `<div class="k">${label}</div>` + [x, y].map((m, i) => col(m, i) + f(m, i) + '</div>').join('');
+    const draw = layer => {
+      $('#cmp', layer).innerHTML = '<div class="h"></div>' + [x, y].map((m, i) =>
+        `<div class="h${i === keep ? ' keep' : ''}"><label class="radio"><input type="radio" name="keep" value="${i}"${i === keep ? ' checked' : ''}> Keep this one</label></div>`).join('')
+        + row('Mod', m => `<b>${esc(m.id)}</b>`)
+        + row('Downloads', m => esc(arr(m.files).join(', ') || 'not recorded'))
+        + row('Version', (m, i) => m.version ? `<span class="${i === newer && x.version !== y.version ? 'newer' : ''}">${esc(m.version)}${i === newer && x.version !== y.version ? ' (newer)' : ''}</span>` : '<span class="dim">unknown</span>')
+        + row('Added', m => esc(m.added || '-'))
+        + row('Options', m => `${num(m.options)} in ${plural(num(m.rows), 'row')}`)
+        + row('Size', m => esc(fmtSize(m.size)) || '-')
+        + `<div class="k last">Shared files</div><div class="files last"><ul>${arr(r.shared).map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+      const other = [x, y][1 - keep];
+      $('#cmp-del', layer).textContent = `Also delete ${other.id}'s files from the library`;
+      layer.querySelector('.dlg-buttons [data-i="0"]').textContent = `Remove ${other.id}`;
+    };
+    await dialog({
+      title: 'Two versions of one mod? (experimental)', icon: 'warn', cls: 'w720',
+      html: `<p>Both mods bring the same ${plural(arr(r.shared).length, 'new file')}. Usually one is an older download of the other.</p>`
+        + '<div class="cmp" id="cmp"></div><div class="choices" style="margin-top:8px"><label class="check"><input type="checkbox" name="del">'
+        + '<span><span id="cmp-del"></span><br><span class="sub">Without this, it stays in the library and Install puts it back.</span></span></label></div>',
+      buttons: [{ label: 'Remove', value: 'ok', default: true }, { label: 'Cancel', value: null, cancel: true }],
+      onOpen: draw,
+      onClick: (e, layer) => { const rd = e.target.closest('input[name="keep"]'); if (rd) { keep = +rd.value; draw(layer); } },
+      onButton: async (_b, layer) => {
+        const other = [x, y][1 - keep];
+        const res = await call('remove_mod', other.id, !!$('input[name="del"]', layer).checked);
+        if (showError(res, 'Remove')) return true;
+        setMsg(`Removing ${other.id}...`);
+        pollFast();
+        return true;
+      },
+    });
+  }
+
+  // -- Find the problem mod
+  async function loadCulprit() {
+    const r = await call('culprit', 'status');
+    S.culprit = r && !isFail(r) ? r : { active: false };
+    renderCulpritNotice();
+  }
+  function renderCulpritNotice() {
+    const el = $('#culprit-notice');
+    const c = obj(S.culprit);
+    el.hidden = !c.active;
+    if (!c.active) return;
+    el.innerHTML = c.found
+      ? `<span class="ico small info"></span><span class="notice-text">Found the problem mod: ${esc(c.found)}. It's off for now.</span>`
+        + '<button class="btn small" data-act="culprit-open">Show the result</button>'
+      : `<span class="ico small info"></span><span class="notice-text">Finding the problem mod: round ${num(c.round)} of about ${num(c.rounds_about)}. `
+        + `${plural(arr(c.off).length, 'mod is', 'mods are')} off.</span><button class="btn small" data-act="culprit-open">Continue...</button>`
+        + '<button class="btn small" data-act="culprit-stop">Turn all back on</button>';
+  }
+  const modLi = (names, sq) => names.map(n => `<li title="${esc(n)}"><span class="sq ${sq}"></span>${esc(n)}</li>`).join('');
+  function culpritHtml(c) {
+    const steps = Array.from({ length: Math.max(num(c.rounds_about), num(c.round)) }, (_x, i) =>
+      `<i class="${i + 1 < num(c.round) || c.found ? 'done' : i + 1 === num(c.round) ? 'run' : ''}"></i>`).join('');
+    if (c.found) {
+      return `<div class="wiz-steps">${steps}<span>Done after ${plural(arr(c.history).length, 'round')}</span></div>`
+        + `<p><b>Found it: ${esc(c.found)}.</b> It's off now; the other mods are back on.</p>`
+        + `<ol class="steps-box">${arr(c.history).map(hh => `<li>${esc(arr(hh.on).slice(0, 3).join(', '))}${arr(hh.on).length > 3 ? ` and ${arr(hh.on).length - 3} more` : ''} on: `
+          + `${hh.answer === 'still' ? 'it still happened' : 'it was gone'}.</li>`).join('')}</ol>`
+        + `<p class="dlg-note">Turning ${esc(c.found)} off stops the problem, even if it also needs another mod to happen. Its files and your picks are kept.</p>`;
+    }
+    const last = arr(c.history).slice(-1)[0];
+    return `<div class="wiz-steps">${steps}<span>Round ${num(c.round)} of about ${num(c.rounds_about)}</span></div>`
+      + (last ? `<p>Round ${num(last.round)}: ${last.answer === 'still' ? 'with those mods off the problem still happened, so it\'s one of the mods that stayed on'
+        : 'with those mods off the problem was gone, so it\'s one of them'}. The others are cleared and stay on.</p>` : '')
+      + `<p><b>Now ${plural(arr(c.off).length, 'mod is', 'mods are')} off.</b> Start the game, try to make the problem happen, close the game, then answer.</p>`
+      + '<div class="three-lists">'
+      + `<div><div>On this round (${arr(c.on).length})</div><ul class="sunken">${modLi(arr(c.on), 'ok')}</ul></div>`
+      + `<div><div>Off this round (${arr(c.off).length})</div><ul class="sunken">${modLi(arr(c.off), 'dis')}</ul></div>`
+      + `<div><div>Cleared, left on (${arr(c.cleared).length})</div><ul class="sunken">${modLi(arr(c.cleared), 'ok')}</ul></div></div>`
+      + `<p class="dlg-note">Turning mods off only moves their prepared files out of the game. The library and your picks stay as they are.`
+      + `${arr(c.before).length ? ` ${plural(arr(c.before).length, 'mod was', 'mods were')} already disabled and ${arr(c.before).length === 1 ? 'is' : 'are'} left alone.` : ''}</p>`;
+  }
+  async function culpritStep(action, value) {
+    const r = await call('culprit', action, value);
+    await refreshAll();
+    await loadCulprit();
+    if (r && isFail(r) && action === 'finish' && arr(r.left).length) { culpritStuck(r); return null; }
+    if (!r || isFail(r)) { setMsg(str(r && r.error) || 'No answer.', 'error'); return null; }
+    return r;
+  }
+  /** Some mods couldn't be turned back on: try again, or forget the hunt (they stay off). */
+  async function culpritStuck(r) {
+    const left = arr(r.left), one = left.length === 1;
+    const d = await dialog({
+      title: 'Find the problem mod (experimental)', icon: 'warn', cls: 'w560',
+      html: `<p>${plural(left.length, 'mod', 'mods')} couldn't be turned back on:</p>`
+        + `<ul class="dlg-list plain sunken">${left.map(m => `<li>${esc(m)}</li>`).join('')}</ul>`
+        + `<p class="sub">${esc(arr(r.errors).join(' '))}</p>`
+        + `<p class="dlg-note">Close the game (or the program that has ${one ? 'its' : 'their'} files open) and try again. Forget ends the search `
+        + `and leaves ${one ? 'it' : 'them'} off; you can enable ${one ? 'it' : 'them'} in the mod list later.</p>`,
+      buttons: [{ label: 'Try again', value: 'again', default: true }, { label: 'Forget', value: 'forget' }, { label: 'Close', value: null, cancel: true }],
+    });
+    if (d.value === 'again') culpritStep('finish', false).then(x => { if (x) setMsg(`All mods are on again. ${RELOAD}`); });
+    else if (d.value === 'forget') {
+      const x = await call('culprit', 'forget');
+      await refreshAll();
+      await loadCulprit();
+      setMsg(x && x.ok !== false ? `The search was ended.${arr(x.left).length ? ` Still off: ${arr(x.left).join(', ')}.` : ''}` : str(x && x.error), x && x.ok !== false ? '' : 'error');
+    }
+  }
+  async function openCulprit() {
+    await loadCulprit();
+    const c = obj(S.culprit);
+    if (!c.active) {
+      const n = S.mods.filter(m => m.state === 'ready').length;
+      const r = await dialog({
+        title: 'Find the problem mod (experimental)', icon: 'info', cls: 'w560',
+        html: `<p>When something goes wrong in game and you don't know which mod causes it, this finds it by turning half of your mods off at a time.</p>`
+          + `<p>Each round: start the game, try to make the problem happen, close the game, then answer. With ${plural(n, 'mod')} it takes about `
+          + `${Math.max(1, Math.ceil(Math.log2(Math.max(2, n))))} rounds.</p><p class="dlg-note">Mods that are already disabled are left alone. `
+          + 'Your picks and the library are not changed.</p>',
+        buttons: [{ label: 'Start', value: 'start', default: true }, { label: 'Cancel', value: null, cancel: true }],
+      });
+      if (r.value !== 'start') return;
+      if (!(await culpritStep('start'))) return;
+    }
+    culpritRound();
+  }
+  async function culpritRound() {
+    const c = obj(S.culprit);
+    if (!c.active) return;
+    if (c.found) {
+      const r = await dialog({
+        title: 'Find the problem mod (experimental)', icon: 'ok', cls: 'w560', html: culpritHtml(c),
+        buttons: [{ label: 'Keep it off', value: 'keep', default: true }, { label: 'Turn all back on', value: 'all' },
+          { label: 'Show its details', value: 'show' }],
+      });
+      if (r.value === null) return;
+      const found = c.found;
+      await culpritStep('finish', r.value !== 'all');
+      if (r.value === 'show') { selectTab('mods'); selectMod(found, true); }
+      setMsg(r.value === 'all' ? `All mods are on again. ${RELOAD}` : `${found} stays off. Enable it in the mod list when you want it back.`);
+      return;
+    }
+    const r = await dialog({
+      title: 'Find the problem mod (experimental)', icon: 'info', cls: 'w720', html: culpritHtml(c),
+      buttons: [{ label: 'It still happens', value: 'still', default: true }, { label: "It's gone", value: 'gone' },
+        { label: 'Stop and turn all back on', value: 'stop' }],
+    });
+    if (r.value === null) return;
+    if (r.value === 'stop') { if (await culpritStep('finish', false)) setMsg(`All mods are on again. ${RELOAD}`); return; }
+    if (await culpritStep('answer', r.value === 'still')) culpritRound();
+  }
+
+  // -- a texture rule: which texture fills an empty link of a material
+  async function openTextureRule(modId, variant, material, param, guess) {
+    const r = await call('texture_choices', modId, variant, material, param || '*');
+    if (showError(r, 'Choose texture')) return;
+    const choices = [{ value: 'game', name: "The game's own texture", sub: 'as before' }]
+      .concat(arr(r.choices).map(obj).map(im => ({ value: im.path, name: im.name, sub: texSize(im), im })));
+    const lower = v => str(v).toLowerCase();
+    let sel = Math.max(0, choices.findIndex(cx => r.current ? lower(cx.value) === lower(r.current) : guess && lower(cx.value) === lower(guess)));
+    const opt = optName(variant);
+    material = str(r.material) || material;
+    let pv = 0;
+    const loadPreview = async (layer, cx) => {
+      const req = ++pv;
+      if (!cx.im || !cx.im.ref) return;
+      const res = await call('texture_preview', modId, cx.im.ref, 256);
+      const img = $('#tx-prev img', layer);
+      if (req !== pv || !img || !res || !res.ok || !isImg(res.url)) return;
+      img.src = res.url;
+      const sz = $('#tx-prev .sz-real', layer);
+      if (sz && res.tex_width) sz.textContent = `${res.tex_width} x ${res.tex_height}${res.format ? ' ' + res.format : ''}`;
+    };
+    const draw = layer => {
+      $('#tx-grid', layer).innerHTML = choices.map((cx, i) => {
+        const isGuess = guess && lower(cx.value) === lower(guess);
+        const pic = cx.value === 'game' ? '<span class="sw64 hatch">game\'s<br>own</span>'
+          : isImg(cx.im.swatch) ? `<img class="sw64" src="${cx.im.swatch}" alt="">` : '<span class="sw64">no<br>swatch</span>';
+        return `<div class="tile${i === sel ? ' sel' : ''}${isGuess ? ' guess' : ''}" data-tile="${i}" title="${esc(cx.name)}${cx.im ? '\n' + esc(cx.im.path) : ''}">${pic}`
+          + `<span class="nm">${esc(cx.name)}</span><span class="sz">${esc(cx.sub)}</span>${isGuess ? '<span class="tag-guess">menu\'s guess</span>' : ''}`
+          + `${r.current && lower(cx.value) === lower(r.current) ? '<span class="tag-guess">your rule</span>' : ''}</div>`;
+      }).join('');
+      const cx = choices[sel];
+      $('#tx-prev', layer).innerHTML = `<div class="pic">${cx.value === 'game' ? '<span class="sw64 hatch" style="width:220px;height:220px">game\'s own</span>'
+        : isImg(cx.im.swatch) ? `<img src="${cx.im.swatch}" alt="">` : cx.im.ref ? '<img alt="">' : '<span class="muted">No swatch saved.</span>'}</div>`
+        + `<div class="nm">${esc(cx.name)}</div><div class="muted"><span class="sz-real">${esc(cx.sub)}</span>${cx.im && cx.im.kind ? ', ' + esc(str(cx.im.kind).toLowerCase()) : ''}</div>`
+        + (cx.im ? `<div class="muted selectable">${esc(cx.im.path)}</div>` : '<div class="muted">The texture the body showed before the outfit was picked.</div>');
+      loadPreview(layer, cx);
+    };
+    const res = await dialog({
+      title: 'Fix a missing texture (experimental)', cls: 'w800',
+      html: `<div class="info-grid"><span class="k">Option</span><span class="v" title="${esc(opt)}">${esc(opt)}</span>`
+        + `<span class="k">Material</span><span class="v" title="${esc(material)}">${esc(leafOf(material))}, ${param && param !== '*' ? `parameter ${esc(param)}` : 'every empty texture link'}</span>`
+        + `<span class="k">Now uses</span><span class="v">${r.current ? `${esc(r.current === 'game' ? "the game's own texture" : leafOf(r.current))} (your rule)` : guess ? `${esc(leafOf(guess))} (the menu's guess)` : "the menu's guess"}</span></div>`
+        + '<div class="chooser"><div class="grid-lv" id="tx-grid" tabindex="0"></div><div class="preview" id="tx-prev"></div></div>'
+        + '<div class="dlg-err" id="tx-err" hidden></div>',
+      foot: 'Saved as a rule for this option. The menu uses it after Reload.',
+      buttons: [{ label: 'Use this texture', value: 'use', default: true }].concat(r.current ? [{ label: 'Remove the rule', value: 'clear' }] : [])
+        .concat([{ label: 'Cancel', value: null, cancel: true }]),
+      onOpen: draw,
+      onClick: (e, layer) => { const t = e.target.closest('[data-tile]'); if (t) { sel = +t.dataset.tile; draw(layer); } },
+      onButton: async (b, layer) => {
+        const value = b.value === 'clear' ? null : choices[sel].value;
+        const x = await call('set_texture_rule', modId, variant, material, param || '*', value);
+        if (!x || isFail(x)) { const er = $('#tx-err', layer); er.hidden = false; er.textContent = str(x && x.error) || 'No answer.'; return false; }
+        return true;
+      },
+    });
+    if (res.value) { setMsg(`${res.value === 'clear' ? 'Rule removed' : 'Saved'}. ${RELOAD}`); S.details = {}; refreshAll(); }
+  }
+
+  // -- a material rule: what an empty material slot of a mod's mesh shows
+  async function openMaterialRule(modId, variant, mesh, slot, slotName, current) {
+    const r = await call('material_choices', modId, variant, mesh, slot);
+    if (showError(r, 'Choose material')) return;
+    const choices = arr(r.choices).map(obj);
+    const lower = v => str(v).toLowerCase();
+    let sel = Math.max(0, choices.findIndex(cx => r.current ? lower(cx.value) === lower(r.current) : cx.value === 'body'));
+    const opt = optName(variant);
+    mesh = str(r.mesh) || mesh;
+    const draw = layer => {
+      $('#mt-list', layer).innerHTML = choices.map((cx, i) => `<label class="choice${i === sel ? ' on' : ''}" data-ch="${i}">`
+        + `<input type="radio" name="mt"${i === sel ? ' checked' : ''}>${cx.value === 'hide' ? '<span class="noimg36 hatch"></span>' : ''}`
+        + `<span class="txt"><span>${esc(cx.label)}${(r.current ? lower(cx.value) === lower(r.current) : cx.value === 'body') ? `<span class="now">${r.current ? 'your rule' : "menu's choice now"}</span>` : ''}</span>`
+        + `<span class="sub">${esc(cx.sub)}${cx.value.startsWith('/') ? ' · ' + esc(cx.value) : ''}</span></span></label>`).join('');
+    };
+    const res = await dialog({
+      title: 'Fix an empty material slot (experimental)', cls: 'w560',
+      html: `<div class="info-grid"><span class="k">Option</span><span class="v">${esc(opt)}</span>`
+        + `<span class="k">Mesh</span><span class="v" title="${esc(mesh)}">${esc(leafOf(mesh))}</span>`
+        + `<span class="k">Slot</span><span class="v">${esc(slot)}${slotName ? ` "${esc(slotName)}"` : ''} (empty in the mod's mesh)</span>`
+        + (current ? `<span class="k">Now shows</span><span class="v">${esc(leafOf(current))}</span>` : '') + '</div>'
+        + '<div class="choice-list" id="mt-list"></div><div class="dlg-err" id="mt-err" hidden></div>',
+      foot: 'Applies to this option only.',
+      buttons: [{ label: 'Use this material', value: 'use', default: true }].concat(r.current ? [{ label: 'Remove the rule', value: 'clear' }] : [])
+        .concat([{ label: 'Cancel', value: null, cancel: true }]),
+      onOpen: draw,
+      onClick: (e, layer) => { const t = e.target.closest('[data-ch]'); if (t) { sel = +t.dataset.ch; draw(layer); } },
+      onButton: async (b, layer) => {
+        const x = await call('set_material_rule', modId, variant, mesh, slot, b.value === 'clear' ? null : choices[sel].value);
+        if (!x || isFail(x)) { const er = $('#mt-err', layer); er.hidden = false; er.textContent = str(x && x.error) || 'No answer.'; return false; }
+        return true;
+      },
+    });
+    if (res.value) { setMsg(`${res.value === 'clear' ? 'Rule removed' : 'Saved'}. ${RELOAD}`); S.details = {}; refreshAll(); }
+  }
+
+  // -- bundle a missing file from another mod
+  async function openBundle(modId, variant) {
+    const plan = await call('bundle_plan', modId, variant);
+    if (showError(plan, 'Bundle')) return;
+    const src = obj(arr(plan.sources)[0]);
+    const files = arr(src.files).map(obj);
+    const total = files.reduce((n, f) => n + num(f.size), 0);
+    const r = await dialog({
+      title: 'Bundle a missing file (experimental)', icon: 'info', cls: 'w640',
+      html: `<p>Copy ${esc(leafOf(src.package))}${files.length > 1 ? ` and the ${plural(files.length - 1, 'file')} it uses` : ''} from <b>${esc(src.mod)}</b> `
+        + `(option ${esc(src.label)}) into the prepared files of <b>${esc(modId)}</b>.</p>`
+        + `<div class="cap">What gets copied${total ? ` (${esc(fmtSize(total))})` : ''}</div>`
+        + '<div class="lv"><table><colgroup><col style="width:190px"><col><col style="width:66px"></colgroup>'
+        + '<thead><tr><th>File</th><th>What</th><th class="num">Size</th></tr></thead><tbody>'
+        + files.map(f => `<tr><td title="${esc(f.path)}">${esc(leafOf(f.path))}</td><td title="${esc(f.path)}">${esc(f.what)}</td>`
+          + `<td class="num">${esc(fmtSize(f.size)) || '-'}</td></tr>`).join('') + '</tbody></table></div>'
+        + `<div class="cap">Options that link to it</div><ul class="dlg-list plain sunken">${arr(src.into).map(x => `<li>${esc(x)}</li>`).join('')}</ul>`
+        + `<p class="dlg-note">Your downloads are not changed. ${esc(modId)} is prepared again afterwards. Undo (in Fixes) removes it again.</p>`,
+      buttons: [{ label: 'Bundle', value: 'ok', default: true }, { label: 'Cancel', value: null, cancel: true }],
+    });
+    if (r.value !== 'ok') return;
+    const res = await call('bundle', modId, src.mod, src.option, [src.package]);
+    if (showError(res, 'Bundle')) return;
+    setMsg(`Bundling ${leafOf(src.package)} into ${modId}...`);
+    pollFast();
+  }
+
+  async function undoFix(i) {
+    const d = S.details[S.selected];
+    const f = obj(arr(d && d.fixes)[i]);
+    const res = await call('undo_fix', d.id, f.ref);
+    if (showError(res, 'Undo')) return;
+    setMsg(arr(res.jobs).length ? `Removing the bundle; ${d.id} is prepared again.` : `Undone. ${RELOAD}`);
+    S.details = {};
+    await refreshAll();
+    pollFast();
+  }
+  async function undoAllFixes() {
+    const d = S.details[S.selected];
+    if (!d) return;
+    const r = await dialog({
+      title: 'Undo all fixes', icon: 'warn', html: `<p>Undo every fix of <span class="dlg-name">${esc(d.id)}</span>?</p>`
+        + `<ul class="dlg-list plain sunken">${arr(d.fixes).map(f => `<li>${esc(f.kind)}: ${esc(f.text)}</li>`).join('')}</ul>`,
+      buttons: [{ label: 'Undo all', value: 'ok', default: true }, { label: 'Cancel', value: null, cancel: true }],
+    });
+    if (r.value !== 'ok') return;
+    const res = await call('undo_all_fixes', d.id);
+    if (showError(res, 'Undo all')) return;
+    setMsg(`All fixes of ${d.id} undone. ${RELOAD}`);
+    S.details = {};
+    await refreshAll();
+    pollFast();
+  }
+
+  /** The Fix buttons of a Game log problem (from its fix: texture, material, repair). */
+  function problemActions(p) {
+    const f = obj(p.fix);
+    const b = [];
+    if (f.kind === 'texture') b.push('<button class="btn small default" data-pfix="texture">Choose texture...</button>');
+    if (f.kind === 'material') b.push('<button class="btn small default" data-pfix="material">Choose material...</button>');
+    if (f.kind === 'repair') b.push(`<button class="btn small default" data-pfix="repair">Repair ${esc(f.mod)}</button>`);
+    if (f.mod && modById(f.mod)) b.push('<button class="btn small" data-pfix="show">Show in Mods</button>');
+    return b.length ? `<div class="pd-actions">${b.join('')}</div>` : '';
+  }
+  async function runProblemFix(kind) {
+    const p = arr(obj(logData()).problems).find(x => str(x.key) === S.selProblem);
+    const f = obj(p && p.fix);
+    if (kind === 'texture') openTextureRule(f.mod, f.variant, f.material, f.param, f.guess);
+    else if (kind === 'material') openMaterialRule(f.mod, f.variant, f.mesh, f.slot, f.slot_name, f.current);
+    else if (kind === 'repair') {
+      const res = await call('repair_option', f.mod, f.variant);
+      if (showError(res, 'Repair')) return;
+      setMsg(`Preparing ${str(f.variant).split('/').slice(1).join(' · ')} of ${f.mod} again. Then press Reload in the menu.`);
+      pollFast();
+    } else if (kind === 'show') { selectTab('mods'); selectMod(f.mod, true); }
+  }
+
   // ------------------------------------------------------------------ actions
   async function afterAdd(res, what) {
     if (showError(res, what)) return res;
@@ -1602,6 +2262,13 @@
     'reinstall': () => { const ids = bulkIds(); if (ids.length) reinstallMany(ids); else if (S.selected !== null) reinstall(S.selected); },
     'remove': () => { const ids = bulkIds(); if (ids.length) askRemoveMany(ids); else if (S.selected !== null) askRemove(S.selected); },
     'reinstall-shown': () => { if (S.selected !== null) reinstall(S.selected); },
+    'toggle-disabled': () => { const many = checkedMods(); toggleDisabled(many.length ? many : [modById(S.selected)]); },
+    'disable-shown': () => toggleDisabled([modById(S.selected)]),
+    'tools': toolsMenu,
+    'edit-rows': () => { if (S.selected !== null) openEditRows(S.selected); },
+    'culprit-open': openCulprit,
+    'culprit-stop': async () => { if (await culpritStep('finish', false)) setMsg(`All mods are on again. ${RELOAD}`); },
+    'undo-all-fixes': undoAllFixes,
     'remove-shown': () => { if (S.selected !== null) askRemove(S.selected); },
     'reinstall-all': reinstallAll,
     'open-library': () => openPath('library'),
@@ -1659,6 +2326,9 @@
     }
     items.push({ label: m.state === 'not_installed' ? 'Install' : 'Reinstall', disabled: busy, run: () => reinstall(m.id) });
     items.push({ label: 'Remove...', disabled: busy, run: () => askRemove(m.id) });
+    items.push({ label: m.state === 'disabled' ? 'Enable' : 'Disable', disabled: busy || !(m.state === 'ready' || m.state === 'disabled'),
+      run: () => toggleDisabled([m]) });
+    items.push({ label: 'Edit rows...', disabled: busy || !(m.state === 'ready' || m.state === 'disabled'), run: () => openEditRows(m.id) });
     items.push('-');
     items.push({ label: 'Open folder', run: () => openPath(m.id) });
     items.push('-');
@@ -1828,6 +2498,20 @@
         renderModList();
         return;
       }
+      const cmp = e.target.closest('[data-compare]');
+      if (cmp) { openCompare(S.selected, cmp.dataset.compare); return; }
+      const fixEl = e.target.closest('[data-tex-rule], [data-bundle]');
+      if (fixEl) {
+        const d = S.details[S.selected], row = d && arr(d.rows)[S.selRow], o = obj(row && arr(row.options)[S.selOpt]);
+        const mm = obj(arr(o.missing)[+(fixEl.dataset.texRule || fixEl.dataset.bundle)]);
+        if (fixEl.dataset.texRule !== undefined) openTextureRule(d.id, o.id, mm.in, '*', null);
+        else openBundle(d.id, o.id);
+        return;
+      }
+      const undo = e.target.closest('[data-undo]');
+      if (undo) { undoFix(+undo.dataset.undo); return; }
+      const pfix = e.target.closest('[data-pfix]');
+      if (pfix) { runProblemFix(pfix.dataset.pfix); return; }
       const x = e.target.closest('.xtoggle');
       if (x) { const k = x.dataset.x; if (S.expanded.has(k)) S.expanded.delete(k); else S.expanded.add(k); renderDetails(); return; }
       const vimg = e.target.closest('[data-view-img]');
@@ -1925,6 +2609,7 @@
         return;
       }
       if (modal) {
+        if (modal.onKey && modal.onKey(e)) return;
         if (e.key === 'Escape') { e.preventDefault(); modal.cancel(); }
         else if (e.key === 'Enter' && !(document.activeElement && document.activeElement.tagName === 'BUTTON')) { e.preventDefault(); modal.accept(); }
         return;
@@ -2018,6 +2703,9 @@
     await loadMonitor();
     if (fileSource()) await loadFileLog();
     setMsg('Ready');
+    const rc = await call('reconcile');           // prepared folders on the wrong side of Disable (an interrupted move)
+    if (rc && arr(rc.moved).length) { setMsg(`Put the prepared files of ${arr(rc.moved).join(', ')} back where Disable says. ${RELOAD}`); refreshAll(); }
+    else if (rc && arr(rc.errors).length) setMsg(arr(rc.errors).join(' '), 'error');
     window.e33.ready = true;
     document.dispatchEvent(new Event('e33ready'));
     tick();
@@ -2051,6 +2739,8 @@
         return true;
       },
       copyAllDetails: id => copyAllDetails(id === undefined ? S.selected : id),
+      openEditRows: id => openEditRows(id === undefined ? S.selected : id),
+      openRepair, openCulprit, openCompare, openTextureRule, openMaterialRule, openBundle, toolsMenu,
       lastCopy: () => S.lastCopy,
       showHelp,
       showDrop: on => { $('#drop-overlay').hidden = !on; },

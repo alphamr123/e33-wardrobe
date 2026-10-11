@@ -75,9 +75,9 @@ SK = '/Game/Characters/Heros/{c}/Customization/Skin/SK_{c}_{n}_Skin'
 PLACEHOLDER = '/Game/Characters/Heros/Lune/SK_Lune_Placeholder'
 SUMMARY_KEYS = {'id', 'name', 'state', 'characters', 'replaces', 'options', 'rows', 'size', 'swatches', 'notes', 'skin', 'note_level'}
 DETAIL_KEYS = {'id', 'name', 'characters', 'replaces', 'options', 'size', 'folder', 'state', 'rows', 'skin',
-               'overlaps', 'notes'}
+               'overlaps', 'notes', 'disabled', 'fixes'}
 OPTION_KEYS = {'id', 'label', 'changes', 'textures', 'tags', 'swatch', 'ok', 'error', 'notes', 'files', 'images',
-               'missing'}
+               'missing', 'rules'}
 IMAGE_KEYS = {'ref', 'name', 'path', 'kind', 'width', 'height', 'format', 'swatch'}
 STATE_KEYS = {'version', 'first_run', 'game', 'ue4ss', 'menu', 'library', 'game_running', 'tools'}
 MONITOR_KEYS = {'watching', 'game_running', 'since', 'menu_active', 'last_activity', 'ended', 'date', 'problems',
@@ -536,7 +536,7 @@ def test_library_view():
           and (im[0]['width'], im[0]['height'], im[0]['format']) == (2048, 1024, 'BC7') and im[1]['kind'] == 'Body'
           and im[0]['swatch'].startswith('data:image/png') and im[1]['swatch'].startswith('data:image/png'), im)
     check('  the package with a link to a missing file, by path', s['missing'] == [
-        {'in': mi, 'name': 'MI_Lune_Clea', 'links': 1, 'texture': True, 'names': []}], s['missing'])
+        {'in': mi, 'name': 'MI_Lune_Clea', 'links': 1, 'texture': True, 'names': [], 'found_in': []}], s['missing'])
     b = opts['Broken']
     check('  a refused option: ok false and why', b['ok'] is False and b['error']
           == 'Its pak was built for a different version of the game engine.' and b['swatch'] is None, b)
@@ -899,6 +899,31 @@ def test_e2e():
     check('relocator settings live in the app data folder', os.environ.get('E33_CONFIG', '').startswith(TMP)
           or paths.tools()['relocate'].CONFIG_PATH.startswith(TMP), paths.tools()['relocate'].CONFIG_PATH)
 
+    # check & repair with the real relocator: a deleted prepared file comes back (only that option)
+    va = next(v for m in reg for sl in m['slots'] for v in sl['variants'] if v['id'].endswith('OutfitA_P'))
+    ucas = va['output'][:-5] + '.ucas'
+    other = next(v for m in reg for sl in m['slots'] for v in sl['variants'] if v['id'].endswith('OutfitB_P'))['output']
+    other_mtime = os.path.getmtime(other)
+    os.remove(ucas)
+    c = a.check_mods()
+    check('e2e check_mods: the deleted file of OutfitA is found', [p['id'] for p in c['problems']] == ['out|' + va['id']], c['problems'])
+    r = a.repair(['out|' + va['id']])
+    a._jobs.wait(600)
+    job = next(j for j in a.poll()['jobs'] if j['id'] == r['jobs'][0])
+    check('  repair prepares only that option again; the file is back, the other option untouched',
+          job['status'] == 'done' and job['kind'] == 'repair' and os.path.isfile(ucas) and os.path.getmtime(other) == other_mtime
+          and a.check_mods()['problems'] == [] and job['steps'][0]['detail'] == '1 option ready', job)
+    # disable / enable with the real files, and a reinstall while disabled keeps it disabled
+    r = a.set_disabled('Test Outfits', True)
+    a.reinstall_mod('Test Outfits')
+    a._jobs.wait(600)
+    st = a.list_mods()[0]['state']
+    check('e2e: disabled, then reinstalled: still disabled, files parked, not in the menu',
+          r['ok'] and st == 'disabled' and not os.path.isdir(os.path.dirname(va['output']))
+          and 'Test Outfits' not in open(os.path.join(paths.menu_dir(game), 'Scripts', 'variants.lua'), encoding='utf-8').read(), st)
+    r = a.set_disabled('Test Outfits', False)
+    check('  enabled again: files back', r['ok'] and os.path.isfile(va['output']) and a.list_mods()[0]['state'] == 'ready')
+
     # the same archive again: an update of the mod
     r = a.add_paths([archive])
     a._jobs.wait(600)
@@ -967,6 +992,331 @@ def test_e2e():
     check('  one the game has is not', got == {}, got)
 
 
+# ============================================================================ fixes (1.3): disable, rows, rules, repair, culprit
+
+def test_culprit_unit():
+    from app.backend import culprit
+    off = set()
+    calls = []
+
+    def switch(mod, on):
+        calls.append((mod, on))
+        (off.discard if on else off.add)(mod)
+    mods = ['A', 'B', 'C', 'D', 'E', 'X']
+    s = culprit.start(mods, ['X'], switch)
+    check('culprit: start turns half of the suspects off, never the mod that was already disabled',
+          s['active'] and s['round'] == 1 and s['on'] == ['A', 'B', 'C'] and s['off'] == ['D', 'E'] and off == {'D', 'E'}
+          and s['before'] == ['X'] and s['rounds_about'] == 3 and not any(m == 'X' for m, _o in calls), (s, off))
+    check('  the state is kept in the app data folder (survives a restart)', culprit.load()['suspects'] == ['A', 'B', 'C', 'D', 'E'])
+    s = culprit.answer(True, switch)              # still happens: it's among A, B, C; D, E are cleared and go back on
+    check('  "it still happens": the ones that were on are the suspects; the cleared ones go back on',
+          s['round'] == 2 and s['cleared'] == ['D', 'E'] and s['on'] == ['A', 'B'] and s['off'] == ['C'] and off == {'C'}, (s, off))
+    s = culprit.answer(False, switch)             # gone with C off: C is it
+    check('  "it\'s gone": the ones that were off are the suspects; one left is the problem mod, and it stays off',
+          s['found'] == 'C' and off == {'C'} and [h['answer'] for h in s['history']] == ['still', 'gone'], (s, off))
+    try:
+        culprit.answer(True, switch)
+        again = False
+    except culprit.CulpritError:
+        again = True
+    check('  answering after it was found is refused', again)
+    r = culprit.finish(True, switch)
+    check('  finish, keeping it off: the state is gone, the found mod stays off', r['active'] is False and r['kept_off'] == 'C'
+          and r['errors'] == [] and off == {'C'} and culprit.load() is None, (r, off))
+    switch('C', True)
+    culprit.start(['A', 'B'], [], switch)
+    r = culprit.finish(False, switch)
+    check('  stop and turn all back on', off == set() and culprit.load() is None and r['active'] is False, off)
+    try:
+        culprit.start(['A'], [], switch)
+        few = False
+    except culprit.CulpritError:
+        few = True
+    check('  needs at least 2 mods that are on', few)
+
+    # robustness (audit 1.3.0): failures, removed mods, mods the user turned off by hand
+    off.clear()
+    broken = {'D'}
+
+    def flaky(mod, on):
+        if mod in broken:
+            raise culprit.CulpritError(f"Couldn't turn {mod} {'on' if on else 'off'}: in use.")
+        (off.discard if on else off.add)(mod)
+    try:
+        culprit.start(['A', 'B', 'C', 'D', 'E', 'F'], [], flaky)
+        err = None
+    except culprit.CulpritError as e:
+        err = str(e)
+    st = culprit.load()
+    check('a mod that can\'t be turned off: the state is saved, "off" lists what is really off, and it says so',
+          err and "Couldn't turn D off" in err and st['mine'] == ['E', 'F'] and st['off'] == ['E', 'F'] and off == {'E', 'F'},
+          (err, st))
+    broken = {'E'}
+    r = culprit.finish(False, flaky, known={'A', 'B', 'C', 'D', 'E', 'F'})
+    check('  "turn all back on" tries every mod and keeps the state for the one that failed',
+          r['active'] is True and r['left'] == ['E'] and off == {'E'} and culprit.load()['mine'] == ['E'] and r['errors'], r)
+    r = culprit.finish(False, flaky, known={'A', 'B', 'C', 'D', 'F'})
+    check('  a mod removed meanwhile is dropped (nothing to turn on); then the hunt ends', r['active'] is False
+          and r['dropped'] == ['E'] and culprit.load() is None, r)
+    broken = {'B', 'C'}
+    off.clear()
+    culprit.start(['A', 'B', 'C'], [], lambda m, on: (off.discard if on else off.add)(m))     # C off
+    r = culprit.finish(False, flaky, known={'A', 'B', 'C'}, forget=True)
+    check('  Forget ends it even when a mod can\'t be turned back on, and says which', r['active'] is False
+          and r['left'] == ['C'] and r['errors'] and culprit.load() is None, r)
+    off.clear()
+    user_off = {'D'}
+    culprit.start(['A', 'B', 'C', 'D'], [], lambda m, on: (off.discard if on else off.add)(m), is_off=lambda m: m in user_off or m in off)
+    st = culprit.load()
+    check('a mod the user turned off by hand is never adopted: not in "mine", so never turned back on',
+          st['off'] == ['C', 'D'] and st['mine'] == ['C'], st)
+    culprit.finish(False, lambda m, on: (off.discard if on else off.add)(m), known={'A', 'B', 'C', 'D'})
+    check('  after "turn all back on" it is still off', 'D' in user_off and 'D' not in off and culprit.load() is None)
+
+
+def make_prepared_game(base):
+    """A fake game with the menu installed and two prepared mods (registry, outputs, library)."""
+    root = fake_game(base)
+    paks = os.path.join(root, 'Sandfall', 'Content', 'Paks')
+    touch(os.path.join(root, 'Sandfall', 'Binaries', 'Win64', 'ue4ss', 'UE4SS.dll'))
+    a = api_mod.Api(start_monitor=False)
+    a.set_game_folder(root)
+    a.install_menu()
+    lua = paths.menu_dir(root)
+    lib = a.get_settings()['library']
+    mesh = SK.format(c='Lune', n='Clea')
+    tex = '/Game/Mods/Set/T_Set_Color'
+    mat = '/Game/Mods/Set/MI_Set_Body'
+    registry = []
+    for name in ('Alpha Set', 'Beta Set', 'Gamma Set'):
+        safe = name.replace(' ', '_')
+        out_dir = os.path.join(paks, '~mods', '_E33Wardrobe', safe)
+        variants = []
+        for o in ('One', 'Two'):
+            option(os.path.join(lib, name), f'Row/{o}', [mesh, tex, mat])
+            stem = f'{safe}_Row_{o}_P'
+            for ext in ('.utoc', '.ucas'):
+                touch(os.path.join(out_dir, stem + ext))
+            classes = {mesh: {'class': 'SkeletalMesh', 'object': 'SK', 'override': True},
+                       tex: {'class': 'Texture2D', 'object': 'T_Set_Color', 'override': False},
+                       mat: {'class': 'MaterialInstanceConstant', 'object': 'MI_Set_Body', 'override': False},
+                       '/Game/Mods/Set/T_Set_Cube': {'class': 'TextureCube', 'object': 'T_Set_Cube', 'override': False},
+                       '/Game/Mods/Set/MF_Set': {'class': 'MaterialFunction', 'object': 'MF_Set', 'override': False}}
+            variants.append({'id': f'{name}/Row/{o}', 'label': f'Row: {o}', 'classes': classes,
+                             'map': {p: '/Game/ZW' + safe + p[5:] for p in classes}, 'output': os.path.join(out_dir, stem + '.utoc')})
+        registry.append({'name': name, 'slots': [{'id': f'{name}/Row', 'label': f'{name}: Row', 'character': 'Lune',
+                                                  'variants': variants}]})
+    paths.write_json(os.path.join(lua, 'wardrobe_registry.json'), registry)
+    from app.backend import fixes
+    fixes.tool().write_menu(lua)
+    return a, root, paks, lua, lib, mesh, tex, mat
+
+
+def menu_text(lua):
+    with open(os.path.join(lua, 'Scripts', 'variants.lua'), encoding='utf-8') as f:
+        return f.read()
+
+
+def test_fixes():
+    from app.backend import fixes
+    a, root, paks, lua, lib, mesh, tex, mat = make_prepared_game(os.path.join(TMP, 'fixgame'))
+    check('fixes: the prepared mods are in the menu', all(f'"{n}"' in menu_text(lua) for n in ('Alpha Set', 'Beta Set')))
+    # disable / enable
+    r = a.set_disabled('Alpha Set', True)
+    live = os.path.join(paks, '~mods', '_E33Wardrobe', 'Alpha_Set')
+    parked = os.path.join(os.path.dirname(paks), 'E33Wardrobe_Disabled', 'Alpha_Set')
+    mods = {m['id']: m for m in a.list_mods()}
+    d = a.mod_details('Alpha Set')
+    check('disable: the prepared files move out of Paks, the menu leaves the mod out, the app says "disabled"',
+          r == {'ok': True} and not os.path.isdir(live) and os.path.isfile(os.path.join(parked, 'Alpha_Set_Row_One_P.utoc'))
+          and '"Alpha Set"' not in menu_text(lua) and mods['Alpha Set']['state'] == 'disabled' and d['disabled'] is True
+          and d['state'] == 'disabled' and not any('missing' in n['text'] for n in d['notes']), (r, mods['Alpha Set']['state']))
+    check('  its swatches and report are still found (details keep working)', len(d['rows']) == 1 and d['rows'][0]['options'])
+    r = a.set_disabled('Alpha Set', False)
+    check('enable: back in Paks and in the menu', r['ok'] and os.path.isdir(live) and '"Alpha Set"' in menu_text(lua)
+          and a.mod_details('Alpha Set')['state'] == 'ready')
+    check('disable refuses an unknown mod', a.set_disabled('Nope', True)['ok'] is False)
+    # edit rows
+    ed = a.rows_editor('Alpha Set')
+    row = ed['rows'][0]
+    check('rows_editor: rows with options, labels and their defaults', ed['ok'] and row['id'] == 'Alpha Set/Row'
+          and [o['id'] for o in row['options']] == ['Alpha Set/Row/One', 'Alpha Set/Row/Two'] and row['default'] == row['label']
+          and ed['defaults'][0]['id'] == 'Alpha Set/Row', ed)
+    model = {'rows': [{'id': 'Alpha Set/Row', 'label': 'Herald coat', 'options': [{'id': 'Alpha Set/Row/One', 'label': 'First'}]},
+                      {'id': 'Alpha Set/+1', 'label': 'Extras', 'new': True, 'character': 'Lune',
+                       'options': [{'id': 'Alpha Set/Row/Two', 'label': row['options'][1]['label'], 'hidden': True}]}]}
+    r = a.save_rows('Alpha Set', model)
+    fx = fixes.mod_entry(fixes.load(lua), 'Alpha Set')
+    text = menu_text(lua)
+    check('save_rows: only the differences go into fixes.json', r == {'ok': True} and fx.get('rows') == {'Alpha Set/Row': {'label': 'Herald coat'}}
+          and fx.get('new_rows') == [{'id': 'Alpha Set/+1', 'label': 'Extras', 'character': 'Lune'}]
+          and fx.get('options') == {'Alpha Set/Row/One': {'label': 'First'}, 'Alpha Set/Row/Two': {'row': 'Alpha Set/+1', 'hidden': True}}, fx)
+    check('  and variants.lua shows the new names, without the hidden option', '"Herald coat"' in text and '"First"' in text
+          and 'Alpha Set/Row/Two' not in text, text[:600])
+    d = a.mod_details('Alpha Set')
+    check('  the details show the rows as the menu does, with what they were, and a Fixes entry',
+          d['rows'][0]['label'] == 'Herald coat' and d['rows'][0]['was'] == 'Row' and d['rows'][0]['options'][0]['label'] == 'First'
+          and d['rows'][1]['label'] == 'Extras' and d['rows'][1]['options'][0]['hidden'] is True
+          and [f['kind'] for f in d['fixes']] == ['Menu rows'] and 'hidden' in d['fixes'][0]['sub'], (d['rows'], d['fixes']))
+    ed2 = a.rows_editor('Alpha Set')
+    check('  the editor opens with the edits', [r2['label'] for r2 in ed2['rows']] == ['Herald coat', 'Extras']
+          and ed2['rows'][1]['options'][0]['home'] == 'Alpha Set/Row', ed2['rows'])
+    # rules
+    r = a.set_texture_rule('Alpha Set', 'Alpha Set/Row/One', mat.lower(), 'Color_MAIN', tex.lower())
+    ch = a.texture_choices('Alpha Set', 'Alpha Set/Row/One', mat.lower(), 'Color_MAIN')
+    check('a texture rule: saved with the texture as the mod has it, offered as the current choice',
+          r == {'ok': True} and ch['current'] == tex and ch['material'] == mat and [c['path'] for c in ch['choices']] == [tex], ch)
+    check('  and it reaches variants.lua', tex.lower() in menu_text(lua).lower(), menu_text(lua)[-800:])
+    check('  a texture that is not the option\'s is refused', a.set_texture_rule('Alpha Set', 'Alpha Set/Row/One', mat, '*',
+                                                                              '/Game/Other/T_X')['ok'] is False)
+    r = a.set_material_rule('Alpha Set', 'Alpha Set/Row/One', mesh, 1, 'body')
+    mc = a.material_choices('Alpha Set', 'Alpha Set/Row/One', mesh.lower(), 1)
+    check('  a TextureCube is not offered, nor accepted', a.set_texture_rule('Alpha Set', 'Alpha Set/Row/One', mat, '*',
+                                                                          '/Game/Mods/Set/T_Set_Cube')['ok'] is False)
+    check('a material rule: body / hide / the option\'s materials (not material functions)', r == {'ok': True} and mc['current'] == 'body'
+          and [c['value'] for c in mc['choices']] == ['body', 'hide', mat] and mc['mesh'] == mesh, mc)
+    d = a.mod_details('Alpha Set')
+    opt = d['rows'][0]['options'][0]
+    check('  the option lists its rules; Fixes lists them with undo refs',
+          [x['kind'] for x in opt['rules']] == ['texture', 'material'] and [f['kind'] for f in d['fixes']]
+          == ['Menu rows', 'Texture rule', 'Material rule'] and d['fixes'][1]['ref']['kind'] == 'texture', (opt['rules'], d['fixes']))
+    r = a.undo_fix('Alpha Set', d['fixes'][1]['ref'])
+    check('undo one fix', r['ok'] and r['jobs'] == [] and [f['kind'] for f in a.mod_details('Alpha Set')['fixes']]
+          == ['Menu rows', 'Material rule'])
+    r = a.undo_all_fixes('Alpha Set')
+    check('undo all: no fixes left, the menu is back to the mod\'s own rows', r['ok'] and a.mod_details('Alpha Set')['fixes'] == []
+          and '"Herald coat"' not in menu_text(lua) and 'Alpha Set/Row/Two' in menu_text(lua))
+    # check & repair
+    os.remove(os.path.join(paks, '~mods', '_E33Wardrobe', 'Beta_Set', 'Beta_Set_Row_Two_P.ucas'))
+    c = a.check_mods()
+    ids = [p['id'] for p in c['problems']]
+    check('check_mods: a missing prepared file is found, with what Repair does', c['ok'] and c['mods'] == 3 and c['options'] == 6
+          and ids == ['out|Beta Set/Row/Two'] and c['problems'][0]['action'] == {'kind': 'options', 'mod': 'Beta Set', 'rels': ['Row/Two']},
+          c['problems'])
+    lua_p = os.path.join(lua, 'Scripts', 'variants.lua')
+    os.utime(lua_p, (time.time() - 600, time.time() - 600))
+    c = a.check_mods()
+    check('  a menu list older than the wardrobe is found too', 'menu|stale' in [p['id'] for p in c['problems']], c['problems'])
+    before = len(a.poll()['jobs'])
+    r = a.repair(['out|Beta Set/Row/Two', 'menu|stale'])
+    jobs_now = a.poll()['jobs'][before:]
+    check('repair: one repair job for that option; the menu list is written again at once', r['ok'] and r['menu'] is True
+          and len(jobs_now) == 1 and jobs_now[0]['kind'] == 'repair' and jobs_now[0]['mod_id'] == 'Beta Set'
+          and 'menu|stale' not in [p['id'] for p in a.check_mods()['problems']], (r, jobs_now))
+    a._jobs.wait(30)
+    a.set_disabled('Gamma Set', True)
+    check('  a disabled mod\'s files are not reported missing', not any(p['mod'] == 'Gamma Set' for p in a.check_mods()['problems']))
+    # compare
+    cm = a.compare_mods('Alpha Set', 'Beta Set')
+    check('compare_mods: both mods with options, rows, size; downloads not recorded for these', cm['ok'] and [m['id'] for m in cm['mods']]
+          == ['Alpha Set', 'Beta Set'] and cm['mods'][0]['options'] == 2 and cm['mods'][0]['files'] == [] and cm['shared'] == [], cm)
+    # culprit through the Api (Gamma is disabled before: left alone)
+    s = a.culprit('start')
+    off_now = {m['id'] for m in a.list_mods() if m['state'] == 'disabled'}
+    check('culprit start: half of the enabled mods off, the already disabled one left alone', s['ok'] and s['off'] == ['Beta Set']
+          and s['on'] == ['Alpha Set'] and s['before'] == ['Gamma Set'] and off_now == {'Beta Set', 'Gamma Set'}, (s, off_now))
+    check('  disabling a mod it turned off is refused while it runs', a.set_disabled('Beta Set', False)['ok'] is False)
+    s = a.culprit('answer', True)
+    off_now = {m['id'] for m in a.list_mods() if m['state'] == 'disabled'}
+    check('  "it still happens" with Beta off: Alpha is the problem mod, off now; Beta back on',
+          s['found'] == 'Alpha Set' and off_now == {'Alpha Set', 'Gamma Set'}, (s, off_now))
+    s = a.culprit('finish', False)
+    off_now = {m['id'] for m in a.list_mods() if m['state'] == 'disabled'}
+    check('  "turn all back on": only the mod disabled before stays off', s['ok'] and off_now == {'Gamma Set'}
+          and a.culprit('status')['active'] is False, off_now)
+    # audit 1.3.0: the hunt protects its mods; a removed mod doesn't block "turn all back on"
+    s = a.culprit('start')
+    r1, r2 = a.remove_mod('Beta Set'), a.set_disabled('Alpha Set', True)
+    check('while it runs, Remove and Disable of its mods are refused with a reason', r1['ok'] is False and r2['ok'] is False
+          and 'Finding the problem mod' in r1['error'] and 'Finding the problem mod' in r2['error'], (r1, r2))
+    reg_p = os.path.join(lua, 'wardrobe_registry.json')
+    with open(reg_p, encoding='utf-8') as f:
+        reg_saved = json.load(f)
+    paths.write_json(reg_p, [m for m in reg_saved if m['name'] != 'Beta Set'])       # removed meanwhile (by hand)
+    s = a.culprit('finish', False)
+    check('  "turn all back on" drops a mod that is gone and finishes', s['ok'] and s['active'] is False
+          and s['dropped'] == ['Beta Set'] and a.culprit('status')['active'] is False, s)
+    paths.write_json(reg_p, reg_saved)
+    a.set_disabled('Beta Set', False)
+    # audit 1.3.0: prepared folders on the wrong side of Disable
+    out_root = os.path.join(paks, '~mods', '_E33Wardrobe')
+    parked_root = os.path.join(os.path.dirname(paks), 'E33Wardrobe_Disabled')
+    shutil.move(os.path.join(out_root, 'Alpha_Set'), os.path.join(parked_root, 'Alpha_Set'))     # enabled, files parked
+    shutil.copytree(os.path.join(parked_root, 'Gamma_Set'), os.path.join(out_root, 'Gamma_Set'))  # disabled, files live
+    ids = {p['id']: p for p in a.check_mods()['problems']}
+    check('check_mods: an enabled mod with parked files, a disabled mod still in ~mods, each with a move repair',
+          ids.get('parked|Alpha Set', {}).get('action') == {'kind': 'move_back', 'mod': 'Alpha Set'}
+          and ids.get('loaded|Gamma Set', {}).get('action') == {'kind': 'move_out', 'mod': 'Gamma Set'}
+          and not any(k.startswith('out|Alpha Set') for k in ids), list(ids))
+    r = a.reconcile()
+    check('  reconcile (app start) moves both where they belong', r['ok'] and sorted(r['moved']) == ['Alpha Set', 'Gamma Set']
+          and os.path.isdir(os.path.join(out_root, 'Alpha_Set')) and not os.path.isdir(os.path.join(out_root, 'Gamma_Set'))
+          and [p['id'] for p in a.check_mods()['problems']] == ['out|Beta Set/Row/Two'],    # deleted earlier on purpose
+          (r, a.check_mods()['problems']))
+    # audit 1.3.0: edits wait for the mod's tasks; the game check uses the lock probe
+    real_active = a._jobs.active_mod_ids
+    a._jobs.active_mod_ids = lambda: {'Alpha Set'}
+    rr = [a.save_rows('Alpha Set', {'rows': []}), a.set_texture_rule('Alpha Set', 'Alpha Set/Row/One', mat, '*', 'game'),
+          a.set_material_rule('Alpha Set', 'Alpha Set/Row/One', mesh, 1, 'body'), a.undo_all_fixes('Alpha Set'),
+          a.set_disabled('Alpha Set', True)]
+    a._jobs.active_mod_ids = real_active
+    check('fix edits and Disable are refused while a task of that mod waits or runs',
+          all(x['ok'] is False and 'Wait for the task of Alpha Set' in x['error'] for x in rr), rr)
+    common = paths.tools()['common']
+    real_running, seen = common.game_running, {}
+    common.game_running = lambda fresh=False, probe=(), lp=None: seen.update(fresh=fresh, probe=list(probe)) or True
+    r = a.set_disabled('Alpha Set', True)
+    common.game_running = real_running
+    check('Disable asks the relocator\'s game check: fresh, with prepared .ucas files as the lock probe',
+          r['ok'] is False and 'Close the game' in r['error'] and seen.get('fresh') is True and seen['probe']
+          and all(p.lower().endswith('.ucas') and p.startswith(out_root) for p in seen['probe']), (r, seen))
+    # audit 1.3.0: an option can't move to a row of another character
+    d = a.rows_editor('Beta Set')
+    model = {'rows': [{'id': 'Beta Set/Row', 'label': 'Row', 'options': [{'id': 'Beta Set/Row/One', 'label': 'One'}]},
+                      {'id': 'Beta Set/+1', 'label': 'Sciel row', 'new': True, 'character': 'Sciel',
+                       'options': [{'id': 'Beta Set/Row/Two', 'label': 'Two'}]}]}
+    r = a.save_rows('Beta Set', model)
+    check('Edit rows: moving a Lune option into a Sciel row is refused, and says why', r['ok'] is False
+          and 'is for Lune' in r['error'] and 'Sciel' in r['error'], r)
+    a.shutdown()
+
+
+def test_bundle_job():
+    """The bundle job calls e33fixes.make_bundle with the source, then prepares the mod again (unit level)."""
+    from app.backend import fixes
+    T = fixes.tool()
+    lib = os.path.join(TMP, 'bundlelib')
+    option(os.path.join(lib, 'Target'), 'Opt', ['/Game/X/MI_A'])
+    option(os.path.join(lib, 'Source'), 'Opt', ['/Game/X/MI_Gone'])
+    env = FakeEnv({'root': TMP, 'paks': os.path.join(TMP, 'bpaks'), 'library': lib, 'lua_dir': os.path.join(TMP, 'blua'),
+                   'retoc': 'retoc'})
+    q = jobs.JobQueue(env)
+    seen = {}
+    real_make, real_reloc = T.make_bundle, jobs.JobQueue._relocate
+    T.make_bundle = lambda *a, **k: seen.update(args=a, kw=k) or {'id': 'b1', 'packages': ['/Game/X/MI_Gone', '/Game/X/T_Gone_D']}
+    jobs.JobQueue._relocate = lambda self, job, folder, ctx, only=None: seen.update(reloc=(folder, only))
+    try:
+        jid = q.bundle('Target', {'from_mod': 'Source', 'from_option': 'Source/Opt', 'packages': ['/Game/X/MI_Gone']})
+        q.wait(10)
+        job = next(j for j in q.snapshot() if j['id'] == jid)
+        check('bundle job: make_bundle gets the source folder, packages and names, then a full reinstall',
+              job['status'] == 'done' and seen['args'][3] == os.path.join(lib, 'Source') and seen['args'][4] == ['/Game/X/MI_Gone']
+              and seen['kw'] == {'retoc': 'retoc', 'from_option': 'Source/Opt', 'from_mod': 'Source'}
+              and seen['reloc'] == (os.path.join(lib, 'Target'), None) and job['steps'][0]['detail'] == '2 files from Source', (job, seen))
+        T.make_bundle = lambda *a, **k: (_ for _ in ()).throw(T.FixError('Source has no MI_Gone.'))
+        jid = q.bundle('Target', {'from_mod': 'Source', 'from_option': 'Source/Opt', 'packages': ['/Game/X/MI_Gone']})
+        q.wait(10)
+        job = next(j for j in q.snapshot() if j['id'] == jid)
+        check('  a failure of make_bundle fails the job with its message', job['status'] == 'failed'
+              and 'Source has no MI_Gone.' in job['error'], job)
+    finally:
+        T.make_bundle, jobs.JobQueue._relocate = real_make, real_reloc
+    import re
+    rx = re.compile('^(' + jobs._only_regex('843 Clea (Short).v2 [x]+y') + ')$')
+    check("--only regex for an option path: matches it exactly, without backslashes (the relocator turns them into '/')",
+          rx.search('843 Clea (Short).v2 [x]+y') and not rx.search('843 Clea (Short).v2 [x]+yz') and '\\' not in rx.pattern)
+
+
 def main():
     root, gp_root = test_game_folder()
     test_ue4ss_and_menu(root, gp_root)
@@ -976,6 +1326,9 @@ def main():
     test_library_view()
     test_jobs()
     test_api_basics(fake_game(os.path.join(TMP, 'apigame')))
+    test_culprit_unit()
+    test_fixes()
+    test_bundle_job()
     test_e2e()
     shutil.rmtree(TMP, ignore_errors=True)
     print(f'\n{fails} failure(s)')

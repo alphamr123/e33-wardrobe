@@ -207,7 +207,8 @@
     const name = c => c[0].toUpperCase() + c.slice(1);
     // texture-only colour options: no swatch saved and no sizes recorded (an earlier build)
     const luneColor = colours.slice(0, 9).map((c, i) => opt(`${i < 2 ? 'Lace dress' : 'Plain dress'}: ${name(c)}`, null,
-      i < 2 ? '6 textures' : '4 textures', 'Outfit (size ?)', [], { _tex: i < 2 ? 6 : 4, _nosize: true }));
+      i < 2 ? '6 textures' : '4 textures', 'Outfit (size ?)', [], { _tex: i < 2 ? 6 : 4, _nosize: true, _texmiss: i === 0,
+        notes: i === 0 ? ["One texture link in MI_Body_Lune-alt points to a file the mod doesn't include; the menu fills it in game."] : [] }));
     const scielOpts = ['sleeveless, barefoot', 'sleeveless, boots', 'sleeves, barefoot', 'sleeves, boots'].map((v, i) =>
       opt(`Lace dress: ${v}`, ['plum', 'navy', 'teal', 'charcoal'][i], 'Outfit mesh, 2 materials, 4 textures, Blueprint',
         'Body 2K, outfit 2K', ['physics'], { kind: 'lace', _bp: 'BP_CharacterSkin_ScielOutfit_Chic',
@@ -235,7 +236,8 @@
         { level: 'info', text: "4 options link to files the mod doesn't include: Sciel outfit \u00b7 Lace dress: sleeveless, barefoot, Sciel outfit \u00b7 Lace dress: sleeveless, boots, Sciel outfit \u00b7 Lace dress: sleeves, barefoot and 1 more.",
           items: missing, what: 'options' },
         { level: 'warn', text: '"Chic Variants Old" has 3 of this mod\'s new files (T_Chic_Trim_D, T_Chic_Trim_N and MI_Chic_Trim). Two versions of one mod? Keep only one in the library.',
-          items: ['/Game/Characters/Sciel/Chic/MI_Chic_Trim', '/Game/Characters/Sciel/Chic/T_Chic_Trim_D', '/Game/Characters/Sciel/Chic/T_Chic_Trim_N'], what: 'files' },
+          items: ['/Game/Characters/Sciel/Chic/MI_Chic_Trim', '/Game/Characters/Sciel/Chic/T_Chic_Trim_D', '/Game/Characters/Sciel/Chic/T_Chic_Trim_N'], what: 'files',
+          compare: 'Chic Variants Old' },
       ],
     };
   }
@@ -296,14 +298,20 @@
       o.files = files;
       o.images = images;
       o.missing = o._bp ? [{ in: `/Game/Characters/Sciel/Chic/${o._bp}`, name: o._bp, links: 1, texture: false,
-        names: ['/Game/Characters/Sciel/Chic/MI_Chic_Trim_Old'] }] : [];
-      delete o._tex; delete o._nosize; delete o._bp;
+        names: ['/Game/Characters/Sciel/Chic/MI_Chic_Trim_Old'],
+        found_in: [{ mod: 'Chic Variants Old', option: 'Chic Variants Old/Lace dress/Trim', label: 'Trim',
+          package: '/Game/Characters/Sciel/Chic/MI_Chic_Trim_Old' }] }] : [];
+      if (o._texmiss) o.missing.push({ in: '/Game/Characters/Lune/Body/MI_Body_Lune-alt', name: 'MI_Body_Lune-alt', links: 1, texture: true, names: [], found_in: [] });
+      o.rules = [];
+      delete o._tex; delete o._nosize; delete o._bp; delete o._texmiss;
     }));
     if (d.skin.has) d.skin.images = skin.length ? skin : d.skin.swatches.map((s, i) => ({ ref: '', name: `T_Body_${i + 1}`, path: '', kind: 'Body', width: 2048, height: 2048, format: 'BC7', swatch: s }));
     d.overlaps.forEach(o => { if (!o.files) o.files = ['/Game/Characters/Heros/Lune/Body/T_Lune_Body_BaseColor']; });
     return d;
   }
   function finish(d) {
+    d.fixes = d.fixes || [];
+    d.disabled = d.state === 'disabled';
     d.folder = LIB + '\\' + d.id;
     d.options = d.rows.reduce((n, r) => n + r.options.length, 0);
     return enrich(d);
@@ -330,7 +338,9 @@
   const M = {
     state: okState(),
     settings: { library: LIB, watch_game: true },
-    mods: [lune(), flower(), herald(), claudia(), chic(), feline()].map(finish),
+    mods: [lune(), flower(), herald(), claudia(), chic(), Object.assign(generic('Chic Variants Old'), { characters: ['Lune', 'Sciel'], replaces: ['Chic'] }),
+      feline()].map(finish),
+    culprit: { active: false },
     jobs: [],
     changed: 1,
     nextJob: 1,
@@ -492,6 +502,70 @@
       return f ? Object.assign({ which, exists: true }, f) : { which, exists: false, watching: false, game_running: false, since: null,
         menu_active: false, last_activity: null, ended: null, date: null, problems: [], on_screen: [], tail: [], files: [], lines: 0 };
     },
+    set_disabled: (id, on) => {
+      const m = M.mods.find(x => x.id === id);
+      if (!m) return { ok: false, error: `No mod named "${id}".` };
+      m.state = on ? 'disabled' : 'ready'; m.disabled = !!on; M.changed++;
+      return { ok: true };
+    },
+    rows_editor: id => {
+      const m = M.mods.find(x => x.id === id);
+      const defaults = (m._defaults || m.rows).map(r => ({ id: r.id, label: r.label, character: r.character, options: r.options.map(o => ({ id: o.id, label: o.label })) }));
+      const rows = m._editor || defaults.map(r => ({ id: r.id, label: r.label, default: r.label, character: r.character, new: false,
+        options: r.options.map(o => ({ id: o.id, label: o.label, default: o.label, hidden: false, home: r.id })) }));
+      return { ok: true, mod: id, rows, defaults };
+    },
+    save_rows: (id, model) => { const m = M.mods.find(x => x.id === id); m._saved = model; M.changed++; return { ok: true }; },
+    texture_choices: (id, vid, material, param) => {
+      const kinds = [['skin1', 'Lune_Body_Basecolor-alt', 'BC7', 2048], ['skin2', 'Lune_Body_Color-alt', 'BC7', 2048], ['blue', 'Lune_Body_Normal-alt', 'BC5', 2048],
+        ['olive', 'Lune_Body_ORM-alt', 'BC7', 2048], ['black', 'T_Lace_Black_D', 'BC7', 2048], ['white', 'T_Lace_White_D', 'BC7', 2048],
+        ['smoke', 'T_Lace_Mask', 'BC4', 1024], ['crimson', 'T_Plain_Crimson_D', 'BC7', 2048], ['navy', 'T_Plain_Navy_D', 'BC7', 2048],
+        ['rose', 'Lune_Nails-alt', 'BC7', 512], ['slate', 'Lune_Body_Detail-alt', 'BC7', 1024]];
+      const choices = kinds.map(([c, n, f, w], i) => ({ ref: `${vid}|/Game/Characters/Lune/Body/${n}`, name: n, path: `/Game/Characters/Lune/Body/${n}`,
+        kind: /Body/.test(n) ? 'Body' : 'Outfit', width: w, height: w, format: f, swatch: swatch(c, i === 6 ? 'stripe' : 'skin', 40 + i) }));
+      return { ok: true, variant: vid, material: '/Game/Characters/Lune/Body/MI_Body_Lune-alt', param: param || '*', current: null, choices };
+    },
+    set_texture_rule: () => ({ ok: true }),
+    material_choices: (id, vid, mesh, slot) => ({ ok: true, variant: vid, mesh, slot, current: null, choices: [
+      { value: 'body', label: "The body's own material", sub: 'What the character wore before' },
+      { value: 'hide', label: 'Hidden', sub: 'The slot shows nothing' },
+      { value: '/Game/Mods/Bikini_Set/Materials/MI_Sciel_Bikini-alt', label: 'MI_Sciel_Bikini-alt', sub: 'A material of this option' },
+      { value: '/Game/Mods/Bikini_Set/Materials/MI_Sciel_Bikini_Trim-alt', label: 'MI_Sciel_Bikini_Trim-alt', sub: 'A material of this option' }] }),
+    set_material_rule: () => ({ ok: true }),
+    bundle_plan: (id, vid) => ({ ok: true, variant: vid, sources: [{ mod: 'Chic Variants Old', option: 'Chic Variants Old/Lace dress/Trim', label: 'Lace dress · Trim',
+      package: '/Game/Characters/Sciel/Chic/MI_Chic_Trim_Old',
+      files: [{ path: '/Game/Characters/Sciel/Chic/MI_Chic_Trim_Old', what: 'Material (the missing file)', size: 14336 },
+        { path: '/Game/Characters/Sciel/Chic/T_Chic_Trim_Old_D', what: 'Texture it uses, 2048 x 2048 BC7', size: 5592405 },
+        { path: '/Game/Characters/Sciel/Chic/T_Chic_Trim_Old_N', what: 'Texture it uses, 2048 x 2048 BC5', size: 5592405 }],
+      into: ['Sciel outfit · Lace dress: sleeveless, barefoot', 'Sciel outfit · Lace dress: sleeveless, boots',
+        'Sciel outfit · Lace dress: sleeves, barefoot', 'Sciel outfit · Lace dress: sleeves, boots'] }] }),
+    bundle: (id) => { const m = M.mods.find(x => x.id === id); return { ok: true, jobs: [newJob(m.name, 'reinstall', m.size, m).id] }; },
+    undo_fix: (id, ref) => { const m = M.mods.find(x => x.id === id); m.fixes = m.fixes.filter(f => JSON.stringify(f.ref) !== JSON.stringify(ref)); M.changed++; return { ok: true, jobs: [] }; },
+    undo_all_fixes: id => { const m = M.mods.find(x => x.id === id); m.fixes = []; M.changed++; return { ok: true, jobs: [] }; },
+    check_mods: () => ({ ok: true, mods: M.mods.length, options: M.mods.reduce((n, m) => n + m.options, 0), problems: [
+      { id: 'out|Chic Variants/Sciel color/Teal_P', level: 'error', mod: 'Chic Variants', variant: 'Chic Variants/Sciel color/Teal_P',
+        where: 'Chic Variants · Sciel color · Teal', problem: 'Prepared file missing',
+        detail: 'Chic_Variants_Sciel_color_Teal_P.utoc (or its .ucas) is gone from Paks\\~mods\\_E33Wardrobe\\Chic_Variants. In game this option shows nothing.',
+        repair: 'Prepare this option again', action: { kind: 'options', mod: 'Chic Variants', rels: ['Sciel color/Teal_P'] } },
+      { id: 'menu|stale', level: 'warn', mod: null, variant: null, where: 'In-game menu', problem: 'Prepared with an older menu list',
+        detail: "The menu's list (variants.lua) is older than the wardrobe (wardrobe_registry.json).", repair: 'Update the list', action: { kind: 'menu' } }] }),
+    repair: ids => ({ ok: true, jobs: [], menu: true, moved: [], errors: [] }),
+    reconcile: () => ({ ok: true, moved: [], errors: [] }),
+    repair_option: () => ({ ok: true, jobs: [] }),
+    compare_mods: (a, b) => ({ ok: true, shared: ['/Game/Characters/Sciel/Chic/MI_Chic_Trim', '/Game/Characters/Sciel/Chic/T_Chic_Trim_D', '/Game/Characters/Sciel/Chic/T_Chic_Trim_N'],
+      mods: [{ id: a, files: ['Chic Variants-412-3-3-1760100000.rar'], version: '3.3', uploaded: '2026-10-01', added: '2026-10-09 18:20', options: 24, rows: 3, size: 223346688, state: 'ready' },
+        { id: b, files: ['Chic Variants-412-2-1-1748200000.rar'], version: '2.1', uploaded: '2026-05-25', added: '2026-09-28 21:02', options: 4, rows: 1, size: 31457280, state: 'ready' }] }),
+    culprit: (action, value) => {
+      const c = M.culprit;
+      if (action === 'status') return Object.assign({ ok: true }, c);
+      if ((action === 'finish' || action === 'forget') && M.culpritStuck) {
+        const left = M.culpritStuck; if (action === 'forget') { M.culprit = { active: false }; M.culpritStuck = null; }
+        const errors = left.map(m => `${m}: a file in its prepared folder is in use.`);
+        return { ok: action === 'forget', error: errors.join(' '), active: action !== 'forget', kept_off: null, errors, dropped: [], left };
+      }
+      if (action === 'finish') { M.culprit = { active: false }; return { ok: true, active: false }; }
+      return Object.assign({ ok: true }, c);
+    },
     install_menu: () => {
       if (!M.state.game.found) return { ok: false, error: 'Set the game folder first.', state: M.state };
       M.state.menu = { installed: true, version: M.state.menu.bundled, bundled: M.state.menu.bundled, update: false };
@@ -555,11 +629,18 @@
       problems: [
         { key: 'missing:chic-sciel-pearl', level: 'error', title: 'A variant could not be loaded: Chic Variants · Sciel · Pearl',
           detail: "The game didn't find the variant's mesh. Its files in ~mods may be older than the menu's list.",
-          hint: 'Reinstall Chic Variants, then press Reload in the menu.', first: '21:07:30', last: '21:07:30', count: 1 },
+          hint: 'Repair it, then press Reload in the menu.', first: '21:07:30', last: '21:07:30', count: 1,
+          fix: { kind: 'repair', mod: 'Chic Variants', variant: 'Chic Variants/Sciel color/Pearl_P' } },
         { key: 'watchdog', level: 'warn', title: 'The game stopped responding for 9 s',
           detail: 'The menu was idle, so the pause came from the game itself. During a long loading screen this is normal.',
           hint: 'If it happens outside loading screens, note the time and attach report.txt to a bug report.',
           first: '21:05:01', last: '21:06:10', count: 3 },
+        { key: 'empty-material:Sciel:body:MI_Body_Sciel', level: 'info', title: "Filled an empty material slot on Sciel's outfit",
+          detail: "The mod's mesh has no material for slot body (material 1), so the menu used MI_Body_Sciel (the body's material for slot body).",
+          hint: "The mod's mesh leaves this slot to the game; the menu uses the body's own material so it isn't grey. If it looks wrong, send report.txt.",
+          first: '21:08:40', last: '21:08:40', count: 1,
+          fix: { kind: 'material', mod: 'Chic Variants', variant: 'Chic Variants/Sciel outfit/Lace_dress_sleeves_boots_P', mesh: '/game/mods/chic/sk_sciel_chic_skin',
+            slot: 1, slot_name: 'body', current: '/Game/Characters/Heros/Sciel/Body/MI_Body_Sciel' } },
         { key: 'hidden:sciel-chic', level: 'info', title: 'Sciel · Chic: Velvet is hidden by a later pick',
           detail: 'Altered Flower Suit changes the same pieces and was picked later.',
           hint: 'Use Bring to front on that row in the menu.', first: '21:08:12', last: '21:08:12', count: 1 },
@@ -703,6 +784,84 @@
     gamelog_filter: () => { presetRunning(); return async ui => { ui.selectTab('log'); await wait(150); ui.filterProblem('watchdog'); }; },
     gamelog_last: () => { presetLast(); return async ui => { ui.setLogSource('this'); ui.selectTab('log'); await wait(150); }; },
     gamelog_previous: () => { presetLast(); return async ui => { ui.setLogSource('previous'); ui.selectTab('log'); await wait(250); ui.filterProblem('load:T_Old'); }; },
+    fx_tools_menu: () => async ui => { ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150); ui.toolsMenu(); },
+    fx_repair: () => async ui => { ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(120); ui.openRepair(); await wait(200); },
+    fx_repair_log: () => { presetRunning(); return async ui => { ui.selectTab('log'); await wait(150); ui.filterProblem('missing:chic-sciel-pearl'); }; },
+    fx_compare: () => async ui => {
+      ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150);
+      document.querySelector('#details-body').scrollTop = 9999; await wait(50); ui.openCompare('Chic Variants', 'Chic Variants Old'); await wait(150);
+    },
+    fx_note_compare: () => async ui => { ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150); document.querySelector('#details-body').scrollTop = 9999; },
+    fx_edit_rows: () => {
+      const m = M.mods.find(x => x.id === 'Infernal Herald');
+      m.state = 'ready';
+      const r = m.rows[0];
+      m._editor = [
+        { id: r.id, label: 'Herald coat', default: r.label, character: 'Lune', new: false, options: [
+          { id: r.options[0].id, label: 'Herald', default: 'Herald', hidden: false, home: r.id },
+          { id: r.options[1].id, label: 'Herald, no horns', default: 'Herald, no horns', hidden: false, home: r.id },
+          { id: r.options[2].id, label: 'Herald, ash', default: 'Herald, ash', hidden: true, home: r.id }] },
+        { id: 'Infernal Herald/+1', label: 'Herald extras', default: null, character: 'Lune', new: true, options: [
+          { id: 'Infernal Herald/Potato bag/Cape_P', label: 'Cape only', default: 'Cape only', hidden: false, home: r.id }] }];
+      m._defaults = [{ id: r.id, label: r.label, character: 'Lune', options: r.options.concat([{ id: 'Infernal Herald/Potato bag/Cape_P', label: 'Cape only' }]) }];
+      return async ui => {
+        ui.selectTab('mods'); ui.selectMod('Infernal Herald'); await wait(150); ui.openEditRows('Infernal Herald'); await wait(150);
+        document.querySelector('[data-ed="rename"]').click(); await wait(50);
+      };
+    },
+    fx_disabled: () => {
+      const m = M.mods.find(x => x.id === 'Claudia Set');
+      m.state = 'disabled'; m.disabled = true;
+      return async ui => { ui.selectTab('mods'); ui.selectMod('Claudia Set'); await wait(150); ui.showCtxAt('#modlist tbody tr[data-id="Claudia Set"]', 150, 168); };
+    },
+    fx_culprit: () => {
+      ['Infernal Herald', 'Claudia Set', 'Chic Variants Old'].forEach(id => { const m = M.mods.find(x => x.id === id); m.state = 'disabled'; m.disabled = true; });
+      M.culprit = { active: true, round: 2, rounds_about: 3, on: ['Altered Flower Suit', 'Chic Variants'], off: ['Claudia Set', 'Chic Variants Old'],
+        cleared: ['Lune Outfit Options', 'Feline Sorceress'], before: ['Infernal Herald'], found: null, started: '2026-10-11 20:02',
+        history: [{ round: 1, on: ['Altered Flower Suit', 'Chic Variants', 'Claudia Set', 'Chic Variants Old'], off: ['Lune Outfit Options', 'Feline Sorceress'], answer: 'still' }] };
+      return async ui => { ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150); ui.openCulprit(); await wait(150); };
+    },
+    fx_culprit_stuck: () => {
+      ['Claudia Set', 'Chic Variants Old'].forEach(id => { const m = M.mods.find(x => x.id === id); m.state = 'disabled'; m.disabled = true; });
+      M.culprit = { active: true, round: 2, rounds_about: 3, on: ['Altered Flower Suit', 'Chic Variants'], off: ['Claudia Set', 'Chic Variants Old'],
+        cleared: ['Lune Outfit Options', 'Feline Sorceress'], before: [], found: null, started: '2026-10-11 20:02', history: [] };
+      M.culpritStuck = ['Chic Variants Old'];
+      return async ui => { ui.selectTab('mods'); await wait(150); document.querySelector('[data-act="culprit-stop"]').click(); await wait(250); };
+    },
+    fx_culprit_done: () => {
+      const m = M.mods.find(x => x.id === 'Feline Sorceress'); m.state = 'disabled'; m.disabled = true;
+      M.culprit = { active: true, round: 3, rounds_about: 3, on: [], off: [], cleared: ['Altered Flower Suit', 'Chic Variants', 'Claudia Set', 'Chic Variants Old', 'Lune Outfit Options'],
+        before: [], found: 'Feline Sorceress', started: '2026-10-11 20:02', history: [
+          { round: 1, on: ['Altered Flower Suit', 'Chic Variants', 'Claudia Set'], off: ['Chic Variants Old', 'Lune Outfit Options', 'Feline Sorceress'], answer: 'gone' },
+          { round: 2, on: ['Chic Variants Old', 'Lune Outfit Options'], off: ['Feline Sorceress'], answer: 'gone' }] };
+      return async ui => { ui.selectTab('mods'); ui.selectMod('Feline Sorceress'); await wait(150); ui.openCulprit(); await wait(150); };
+    },
+    fx_texture: () => async ui => {
+      ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150); ui.selectRow(0); ui.selectOption(0); await wait(50);
+      ui.openTextureRule('Chic Variants', 'Chic Variants/Lune color/Lace_dress_Black_P', '/game/characters/lune/body/mi_body_lune-alt', 'Color_MAIN',
+        '/Game/Characters/Lune/Body/Lune_Body_Basecolor-alt');
+      await wait(150);
+    },
+    fx_option_fixes: () => async ui => { ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150); ui.selectRow(0); ui.selectOption(0); },
+    fx_material: () => { presetRunning(); return async ui => {
+      ui.selectTab('log'); await wait(150); ui.filterProblem('empty-material:Sciel:body:MI_Body_Sciel'); await wait(50);
+      ui.openMaterialRule('Chic Variants', 'Chic Variants/Sciel outfit/Lace_dress_sleeves_boots_P', '/game/mods/chic/sk_sciel_chic_skin', 1, 'body',
+        '/Game/Characters/Heros/Sciel/Body/MI_Body_Sciel');
+      await wait(150);
+    }; },
+    fx_log_fix: () => { presetRunning(); return async ui => { ui.selectTab('log'); await wait(150); ui.filterProblem('empty-material:Sciel:body:MI_Body_Sciel'); }; },
+    fx_bundle: () => async ui => {
+      ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150); ui.selectRow(1); ui.selectOption(0); await wait(50);
+      ui.openBundle('Chic Variants', 'Chic Variants/Sciel outfit/Lace_dress_sleeveless_barefoot_P'); await wait(150);
+    },
+    fx_fixes: () => {
+      const m = M.mods.find(x => x.id === 'Chic Variants');
+      m.fixes = [
+        { kind: 'Texture rule', text: 'Color_MAIN in MI_Body_Lune-alt uses Lune_Body_Color-alt', sub: 'Lune color · Lace dress: Black.', ref: { kind: 'texture' } },
+        { kind: 'Bundled', text: 'MI_Chic_Trim_Old and 2 files it uses', sub: "From Chic Variants Old (Lace dress/Trim), 10.7 MB, added 2026-10-11 20:14. The app's own copy: it stays when that mod is removed.", ref: { kind: 'bundle', id: 'b1' } },
+        { kind: 'Menu rows', text: 'Rows and options edited', sub: '2 options renamed.', ref: { kind: 'rows' } }];
+      return async ui => { ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150); ui.selectRow(1); };
+    },
     help: () => ui => ui.showHelp(),
   };
   const wait = ms => new Promise(r => setTimeout(r, ms));

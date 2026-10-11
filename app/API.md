@@ -41,6 +41,22 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
 | `open_path(what)` | Opens Explorer. `what`: `"game"`, `"library"`, `"mods"` (Paks\~mods\_E33Wardrobe), `"menu"` (ue4ss\Mods\E33Wardrobe), `"report"` (report.txt), `"crashes"`, or a mod id (its library folder). `{ok, error?}` |
 | `open_url(name)` | `name`: `"ue4ss"` (Nexus mod 630), `"nexus"` (mod 938), `"github"`, `"guide"`. `{ok}` |
 | `monitor()` | `Monitor` |
+| `set_disabled(mod_id, on)` | Disable (`on` true) or enable a prepared mod: its prepared folder moves between `Paks\~mods\_E33Wardrobe` and `Content\E33Wardrobe_Disabled`, the menu leaves it out, picks are kept (`e33fixes.set_disabled`). Refused while the game runs or a task of that mod is waiting. `{ok, error?}` |
+| `rows_editor(mod_id)` | The Edit rows dialog's data: `{ok, mod, rows: [EditRow], defaults: [{id, label, character, options: [{id, label}]}]}` (`defaults`: the rows without edits, for Reset all). |
+| `save_rows(mod_id, model)` | `model: {rows: [{id, label, new, character, options: [{id, label, hidden}]}]}` in display order (new rows: id `<mod>/+<n>`). Stores the differences in fixes.json and rewrites variants.lua. `{ok}` |
+| `texture_choices(mod_id, variant_id, material, param)` | For "Choose texture": `{ok, variant, material (as cased in the mod), param ("*" = every empty link), current: rule value or null, choices: [Image]}` (the option's textures). |
+| `set_texture_rule(mod_id, variant_id, material, param, texture)` | `texture`: a texture package of that option, `"game"` (the game's own), or null (remove the rule). `{ok}` |
+| `material_choices(mod_id, variant_id, mesh, slot)` | For "Choose material": `{ok, variant, mesh, slot, current, choices: [{value: "body" \| "hide" \| material path, label, sub}]}`. |
+| `set_material_rule(mod_id, variant_id, mesh, slot, choice)` | `choice`: `"body"`, `"hide"`, a material package of that option, or null. `{ok}` |
+| `bundle_plan(mod_id, variant_id)` | What Bundle would copy for an option's missing files: `{ok, variant, sources: [{mod, option, label, package, files: [{path, what, size}], into: ["Row · Option"]}]}`, or `{ok:false}` when no library mod has them. |
+| `bundle(mod_id, from_mod, from_option, packages)` | Queues a `bundle` job: `e33fixes.make_bundle`, then a full reinstall of the mod. `{ok, jobs:[id]}` |
+| `undo_fix(mod_id, ref)` / `undo_all_fixes(mod_id)` | Undo one fix (`ref` from `ModDetails.fixes`) or all but "disabled". Removing a bundle queues a job (the mod is prepared again). `{ok, jobs:[id]}` |
+| `check_mods()` | `{ok, mods, options, problems: [RepairProblem]}`: prepared files of every enabled mod, the shared pak, variants.lua (lists every enabled mod, not older than the registry). |
+| `repair(problem_ids)` | Repairs those problems: missing option files: a `repair` job (only those options); shared pak: a reinstall; the menu's list: written again at once. `{ok, jobs:[id], menu: bool}` |
+| `reconcile()` | At app start: prepared folders on the wrong side of Disable (an enabled mod's files in the disabled folder, a disabled mod's files still in ~mods) are moved where they belong. Skipped while the game runs. `{ok, moved: [mods], errors: [sentences]}` |
+| `repair_option(mod_id, variant_id)` | The Game log's Repair button: a `repair` job for one option. `{ok, jobs:[id]}` |
+| `compare_mods(a, b)` | For "Two versions of one mod?": `{ok, mods: [{id, files (the downloads), version, uploaded, added, options, rows, size, state}] (2), shared: [paths]}`. Downloads are recorded from 1.3.0 on. |
+| `culprit(action, value)` | Find the problem mod. `action`: `"status"`, `"start"`, `"answer"` (`value` true: it still happens), `"finish"` (`value` true: keep the found mod off), `"forget"` (turn back on what it can, then end it anyway). `Culprit`; finish / forget also give `{errors, dropped, left}`. While it runs, Remove, Disable and Enable are refused for the mods it manages. |
 | `monitor_file(which, known)` | The logs of a game that has ended, read once through the same rules: `"last"` (live_log.txt + UE4SS.log), `"previous"` (live_log_previous.txt), `"ue4ss"` (UE4SS.log alone). `Monitor` plus `{which, exists, version, files:[paths], lines, menu_version, ue4ss_version}`; `tail` holds up to 5000 lines (for `"ue4ss"`, UE4SS.log's). `known`: the `version` the page has; when the files haven't changed the answer is only `{ok, unchanged: true, version, which}`. |
 | `problems_text()` | Plain text of the current problems, for pasting in a bug report. |
 | `get_settings()` / `save_settings(dict)` | `{library, watch_game: bool}` |
@@ -76,7 +92,7 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
 {
   "id": "Lune Outfit Options",                 // = folder name in the library = name in the wardrobe
   "name": "Lune Outfit Options",
-  "state": "ready" | "not_installed" | "working" | "failed",
+  "state": "ready" | "not_installed" | "working" | "failed" | "disabled",
   "characters": ["Lune"],
   "replaces": ["Expedition", "Civilian Skirt", "Bikini A", "Clea", "Sirene"],   // outfit names
   "options": 26, "rows": 5,
@@ -109,18 +125,50 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
                                                      // else the class name or "File"; game: it replaces a game file
           "images": [Image],                         // every texture; the ones with a swatch first
           "missing": [ { "in": "/Game/.../BP_X", "name": "BP_X", "links": 1, "texture": false,
-                         "names": ["/Game/.../MI_Gone"] } ] } ] } ],
+                         "names": ["/Game/.../MI_Gone"],
+                         "found_in": [ { "mod": "Other Mod", "option": "Other Mod/Row/Opt", "label": "Opt",
+                                         "package": "/Game/.../MI_Gone" } ] } ],
                                                      // links to files that are in neither the game nor the mod;
-                                                     // names: [] when they couldn't be read (see library.missing_names)
+                                                     // names: [] when they couldn't be read (see library.missing_names);
+                                                     // found_in: another library mod has it (Bundle)
+          "rules": [ { "kind": "texture" | "material", "key": "<material>|<param>" | "<mesh>|<slot>",
+                       "value": "<path>" | "game" | "body" | "hide" } ] } ] } ],
   "skin": { "has": true, "text": "Brings its own body textures (4K) for Lune. They show only with this mod's outfits.",
             "swatches": ["data:..."], "images": [Image] },
   "overlaps": [ { "mod": "Other Mod", "text": "Both change Lune's body textures: T_Lune_Body_D. In game, the one picked last shows.",
                   "files": ["/Game/.../T_Lune_Body_D"] } ],      // the game files both replace
   "notes": [ { "level": "warn" | "info", "text": "plain sentence naming the options or files",
                "items": ["Clea · Shorter Skirt (MI_X: 1 link)", ...],    // optional: the full list
-               "what": "options" | "files" } ]
+               "what": "options" | "files",
+               "compare": "Other Mod" } ],               // optional: "Two versions of one mod?" (Compare...)
+  "disabled": false,
+  "fixes": [ { "kind": "Texture rule" | "Material rule" | "Bundled" | "Menu rows", "text": "...", "sub": "...",
+               "ref": { "kind": "texture" | "material" | "bundle" | "rows", ... } } ]   // for undo_fix
 }
-// Shared new files of two mods leave out PrimaryAssetLabels (cook metadata).
+// Rows are shown as the in-game menu shows them after Edit rows: renamed items carry "was" (the
+// label before), moved options "moved_from", hidden options "hidden": true, new rows "new": true.
+// Shared new files of two mods leave out PrimaryAssetLabels (cook metadata) and bundled files.
+
+// EditRow (rows_editor)
+{ "id": "<slot id>" | "<mod>/+<n>", "label": "Herald coat", "default": "Potato bag" | null, "character": "Lune" | null,
+  "new": false, "options": [ { "id": "<variant id>", "label": "...", "default": "...", "hidden": false,
+                                "home": "<the row id it is in without edits>" } ] }
+
+// RepairProblem (check_mods)
+{ "id": "out|<variant id>" | "shared|<mod>" | "menu|<mod>" | "menu|stale" | "menu|missing",
+  "level": "error" | "warn", "mod": "..." | null, "variant": "..." | null, "where": "Mod · option",
+  "problem": "Prepared file missing", "detail": "plain sentence", "repair": "Prepare this option again",
+  "action": { "kind": "options", "mod", "rels": [...] } | { "kind": "mod", "mod" } | { "kind": "menu" }
+            | { "kind": "move_back" | "move_out", "mod" } | null }
+// "parked|<mod>": an enabled mod's prepared folder is in the disabled folder (move_back);
+// "loaded|<mod>": a disabled mod's folder is still in ~mods (move_out). repair() also returns {moved, errors}.
+
+// Culprit (culprit)
+{ "ok": true, "active": true, "round": 2, "rounds_about": 3, "on": [...], "off": [...], "cleared": [...],
+  "before": [...],                                     // already disabled when it started: left alone
+  "found": null | "Mod", "started": "YYYY-MM-DD HH:MM",
+  "history": [ { "round": 1, "on": [...], "off": [...], "answer": "still" | "gone" } ] }
+// Kept in %APPDATA%\E33Wardrobe\culprit.json until it is finished. Cleared mods stay on.
 
 // Image (a texture of an option)
 { "ref": "<variant id>|/Game/.../T_Clea_D",         // for texture_preview; "<variant id>|#0" for a swatch
@@ -167,7 +215,12 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
     { "key": "watchdog", "level": "error" | "warn" | "info", "title": "The game stopped responding for 9 s",
       "detail": "The menu was idle, so the pause came from the game itself.", "hint": "...",
       "first": "21:05:01", "last": "21:06:10", "count": 3,
-      "lines": ["21:05:01 WATCHDOG: ...", "21:06:10 WATCHDOG: ..."] } ],
+      "lines": ["21:05:01 WATCHDOG: ...", "21:06:10 WATCHDOG: ..."],
+      "fix": null | { "kind": "texture", "mod", "variant", "material", "param", "guess" }
+                  | { "kind": "material", "mod", "variant", "mesh", "slot", "slot_name", "current" }
+                  | { "kind": "repair", "mod", "variant" } } ],
+                                               // texture / material: from the menu's {fix:...} tag on the
+                                               // line (never shown); repair: a prepared file that didn't load
                                                // the log lines that raised it (newest 25), as in tail but
                                                // with user names hidden and cut at 500 characters;
                                                // UE4SS.log lines read "HH:MM:SS [UE4SS] text"
@@ -182,5 +235,10 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
 
 - `%APPDATA%\E33Wardrobe\app.json`: settings (game folder, library folder, watch_game).
 - `%APPDATA%\E33Wardrobe\relocator.json`: the relocator's saved paths (`E33_CONFIG`).
+- `%APPDATA%\E33Wardrobe\sources.json`: which downloads each mod came from (for Compare).
+- `%APPDATA%\E33Wardrobe\culprit.json`: Find the problem mod, while it runs.
+- `ue4ss\Mods\E33Wardrobe\fixes.json`: disabled mods, row edits, texture / material rules, bundles
+  (`tools/e33fixes.py`; kept on Reinstall). Bundled files are under `ue4ss\Mods\E33Wardrobe\bundles\`.
+- `Sandfall\Content\E33Wardrobe_Disabled\`: prepared files of disabled mods.
 - The library (`<game>\Sandfall\Content\Paks_ModLibrary\<mod>`), `Paks\~mods\_E33Wardrobe\`, and
   `ue4ss\Mods\E33Wardrobe\`: the same places the command-line tools use.

@@ -26,6 +26,8 @@ SCREENS = [
     'mods_empty', 'mods_list', 'mods_details', 'mods_chic', 'tasks_running', 'confirm_remove',
     'mods_bulk', 'mods_expanded', 'mods_lune_color', 'ctx_details', 'ctx_modlist', 'image_viewer', 'confirm_bulk_remove',
     'gamelog_running', 'gamelog_idle', 'gamelog_filter', 'gamelog_last', 'gamelog_previous', 'drop_overlay', 'help',
+    'fx_tools_menu', 'fx_repair', 'fx_repair_log', 'fx_note_compare', 'fx_compare', 'fx_edit_rows', 'fx_disabled', 'fx_culprit',
+    'fx_culprit_done', 'fx_option_fixes', 'fx_texture', 'fx_log_fix', 'fx_material', 'fx_bundle', 'fx_fixes',
 ]
 DEFAULT_CHROME = os.path.expanduser('~/.cache/ms-playwright/chromium-1187/chrome-linux/chrome')
 DEFAULT_FONTS = os.environ.get('E33_RENDER_FONTS')   # a folder with Roboto.ttf, to stand in for Segoe UI

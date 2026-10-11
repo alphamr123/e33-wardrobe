@@ -22,7 +22,7 @@ Nothing is queued to the game thread from another thread (see "threading" below)
 ]]
 
 local MOD = "E33Wardrobe"
-local VERSION = "1.2.1"                         -- the same as tools/e33common.py VERSION
+local VERSION = "1.3.0"                         -- the same as tools/e33common.py VERSION
 local KEYS = {
     menu = { "DEL", {} },
     menuUp = { "UP_ARROW", { "CONTROL" } }, menuDown = { "DOWN_ARROW", { "CONTROL" } },
@@ -645,7 +645,7 @@ Wear.splitByCharacter = function()
                     if mine then
                         local nv = {}
                         for k, x in pairs(v) do nv[k] = x end
-                        nv.id, nv.map = v.id .. "@" .. c, map
+                        nv.id, nv.map, nv.base = v.id .. "@" .. c, map, v.base or v.id
                         ns.variants[#ns.variants + 1] = nv
                     end
                 end
@@ -1018,21 +1018,36 @@ local function byKind(active, param)
 end
 Wear.fillEmpty = function(actor, comp, char, n, active)
     local d = (char and Wear.donor[char]) or {}
+    local rules = Wear.rules(active)
     for i = 0, (n or 0) - 1 do
         local okm, m = pcall(function() return comp:GetMaterial(i) end)
         if okm and valid(m) then
             local mid
+            local mo, vid = Wear.origOf(isMID(m) and m.Parent or m, active)
             for key, tp in pairs(textureParams(m)) do
                 local name = key:match("^[^|]*")
                 if not valid(tp.tex) then                         -- an empty link reads as an invalid object
-                    local own = (valid(d[name]) and namedLike(active, d[name])) or byKind(active, name)
-                    local tex = own or d[name]
-                    if not valid(tex) then goto continue end
+                    local rule = mo and (rules.tex[mo .. "|" .. name] or rules.tex[mo .. "|*"])
+                    local tex, why
+                    if rule == "game" then
+                        tex, why = d[name], " (the game's own: your choice)"
+                    elseif rule then
+                        tex, why = Wear.resolve(active, rule, "/Script/Engine.Texture"), " (your choice)"
+                    end
+                    local isTex = function(t) return valid(t) and isA(t, "/Script/Engine.Texture") end
+                    if not isTex(tex) then
+                        -- the donor is an object seen earlier: it must still be a texture
+                        local donor = isTex(d[name]) and d[name] or nil
+                        local own = (donor and namedLike(active, donor)) or byKind(active, name)
+                        tex = own or donor
+                        why = own and " (the mod's own texture for it)" or " (what the body showed before)"
+                    end
+                    if not isTex(tex) then goto continue end
                     mid = mid or (isMID(m) and m or makeMID(actor, comp, i, m, nil))
                     if not mid then break end
                     setTexture(mid, tp.info, tex)
-                    change("mat%d texture %s: empty (the mod's material points at a texture it doesn't have) -> %s%s",
-                        i, name, pkgPath(tex) or "?", own and " (the mod's own texture for it)" or " (what the body showed before)")
+                    change("mat%d texture %s: empty (the mod's material points at a texture it doesn't have) -> %s%s {fix:tex|%s|%s|%s}",
+                        i, name, pkgPath(tex) or "?", why, vid or "?", mo or "?", name)
                 end
                 ::continue::
             end
@@ -1084,11 +1099,24 @@ Wear.before = function(comp, mesh, prev)         -- what the body shows before i
 end
 Wear.fillSlots = function(actor, comp, mesh, before, active)
     local names = Wear.slotNames(mesh)
+    local mo, vid = Wear.origOf(mesh, active)
+    local rules = Wear.rules(active)
     local ok, n = pcall(function() return comp:GetNumMaterials() end)
     for i = 0, (ok and n or 0) - 1 do
         local okm, m = pcall(function() return comp:GetMaterial(i) end)
         if okm and not valid(m) then
             local nm = names[i]
+            local tag = string.format(" {fix:mat|%s|%s|%d|%s}", vid or "?", mo or "?", i, nm or "")
+            local rule = mo and rules.mat[mo .. "|" .. i]
+            local chosen = rule and rule ~= "body"
+                and Wear.resolve(active, rule == "hide" and "/Game/Materials/Hide_Material" or rule,
+                                 "/Script/Engine.MaterialInterface")
+            if chosen and valid(chosen) then
+                pcall(function() comp:SetMaterial(i, chosen) end)
+                change("mat%d empty (the mod's mesh has no material for slot %s) -> %s (your choice)%s",
+                    i, nm or "?", pkgPath(chosen) or "?", tag)
+                goto nextslot
+            end
             local donor, how = nm and before.byName[nm], "the body's material for slot " .. tostring(nm)
             if not donor then donor, how = before.skin, "the body's skin material" end
             if donor and valid(donor) then
@@ -1096,8 +1124,8 @@ Wear.fillSlots = function(actor, comp, mesh, before, active)
                 local mid = makeMID(actor, comp, i, parent, nil)
                 if mid and isMID(donor) then pcall(copyParams, donor, mid) end
                 if not mid then pcall(function() comp:SetMaterial(i, donor) end) end
-                change("mat%d empty (the mod's mesh has no material for slot %s) -> %s (%s)",
-                    i, nm or "?", pkgPath(parent) or "?", how)
+                change("mat%d empty (the mod's mesh has no material for slot %s) -> %s (%s)%s",
+                    i, nm or "?", pkgPath(parent) or "?", how, tag)
                 if mid then
                     for key, tp in pairs(textureParams(mid)) do
                         local t = valid(tp.tex) and namedLike(active, tp.tex)
@@ -1109,11 +1137,64 @@ Wear.fillSlots = function(actor, comp, mesh, before, active)
                     end
                 end
             else
-                change("mat%d empty (the mod's mesh has no material for slot %s) and nothing to fill it with",
-                    i, nm or "?")
+                change("mat%d empty (the mod's mesh has no material for slot %s) and nothing to fill it with%s",
+                    i, nm or "?", tag)
             end
         end
+        ::nextslot::
     end
+end
+
+-- Rules the player chose in the app (fixes.json, written into variants.lua as v.fix): which
+-- texture an empty texture link gets ("<material>|<param or *>"), which material an empty slot
+-- gets ("<mesh>|<slot>": "body", "hide" or a material). Keys use lower-case original paths.
+Wear.fixOf, Wear.baseOf = {}, {}
+Wear.indexFixes = function()
+    Wear.fixOf, Wear.baseOf, Wear.ruleCache = {}, {}, setmetatable({}, { __mode = "k" })
+    for _, slot in ipairs(SLOTS) do
+        for _, v in ipairs(slot.variants or {}) do
+            Wear.baseOf[v.id] = v.base or v.id
+            if type(v.fix) == "table" then Wear.fixOf[v.id] = v.fix end
+        end
+    end
+end
+Wear.rules = function(active)                   -- the rules of the variants picked in `active`
+    Wear.ruleCache = Wear.ruleCache or setmetatable({}, { __mode = "k" })
+    local r = active and Wear.ruleCache[active]
+    if r then return r end
+    r = { tex = {}, mat = {} }
+    local seen = {}
+    for _, e in pairs(active or {}) do
+        while e do
+            if e.vid and not seen[e.vid] then
+                seen[e.vid] = true
+                local fx = Wear.fixOf[e.vid]
+                if fx then
+                    for k, v in pairs(type(fx.tex) == "table" and fx.tex or {}) do r.tex[k] = r.tex[k] or v end
+                    for k, v in pairs(type(fx.mat) == "table" and fx.mat or {}) do r.mat[k] = r.mat[k] or v end
+                end
+            end
+            e = e.under
+        end
+    end
+    if active then Wear.ruleCache[active] = r end
+    return r
+end
+Wear.origOf = function(obj, active)             -- lower-case original path, and its variant's registry id
+    local p = valid(obj) and pkgPath(obj)
+    if not p then return nil, nil end
+    local o = (TO_ORIGINAL[p:lower()] or p):lower()
+    local e = active and active[o]
+    return o, e and e.vid and (Wear.baseOf[e.vid] or e.vid) or nil
+end
+Wear.resolve = function(active, orig, class)    -- an asset named by its original path, as the game has it
+    -- now; nil unless it is a `class` ("/Script/Engine.Texture", ".MaterialInterface")
+    if type(orig) ~= "string" or not orig:match("^/[%w_]+/.*[^/]$") then return nil end
+    local e = active and active[orig:lower()]
+    local o
+    if e then o = loadObj(e.pkg, e.obj) else o = loadObj(orig, orig:match("[^/]+$")) end
+    if valid(o) and (not class or isA(o, class)) then return o end
+    return nil
 end
 
 local function fixSlot(actor, active, comp, i, meshDefault, oldDefault, meshChanged)
@@ -2363,6 +2444,7 @@ local function reload()
     loadVariants()
     inferCharacters()
     Wear.splitByCharacter()
+    Wear.indexFixes()
     -- Wear on a slot that can't wear (no mesh) does nothing: drop such stale flags
     do
         local keep, dropped, byId = {}, false, {}
