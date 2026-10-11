@@ -219,6 +219,16 @@ def parse_texture(base_path):
     return {'format': fmt, 'width': sx, 'height': sy, 'mips': mips, 'vt': vt, 'bulk': bulk}
 
 
+def texture_header(base_path):
+    """(width, height, pixel format) from the platform data header alone: works where
+    parse_texture() can't follow the mips (an unsupported layout, bulk data elsewhere)."""
+    with open(base_path + '.uexp', 'rb') as f:
+        uexp = f.read()
+    pos, sx, sy, _packed = find_platform_data(uexp)
+    n = struct.unpack_from('<i', uexp, pos)[0]
+    return sx, sy, uexp[pos + 4:pos + 3 + n].decode('latin-1')
+
+
 def parse_vt(r, bulk):
     """FVirtualTextureBuiltData (UE5 layout)."""
     vt = {}
@@ -545,7 +555,7 @@ def downscale(w, h, px, max_size):
     return nw, nh, bytes(out)
 
 
-def png_bytes(w, h, rgba, opaque=True):
+def png_bytes(w, h, rgba, opaque=True, level=9):
     raw = bytearray()
     for y in range(h):
         raw.append(0)
@@ -559,7 +569,7 @@ def png_bytes(w, h, rgba, opaque=True):
         c = struct.pack('>I', len(d)) + t + d
         return c + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
     return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) +
-            chunk(b'IDAT', zlib.compress(bytes(raw), 9)) + chunk(b'IEND', b''))
+            chunk(b'IDAT', zlib.compress(bytes(raw), level)) + chunk(b'IEND', b''))
 
 
 # --------------------------------------------------------------------------- choosing textures

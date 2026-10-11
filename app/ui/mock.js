@@ -71,6 +71,24 @@
     return (swCache[key] = cv.toDataURL('image/png'));
   }
 
+  function bigPicture(colour, kind, side) {
+    const N = 64, src = new Image();
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = Math.min(side, 1024);
+    const g = cv.getContext('2d');
+    const [c1, c2] = COL[colour] || COL.smoke;
+    const gr = g.createLinearGradient(0, 0, cv.width * 0.4, cv.height);
+    gr.addColorStop(0, c1); gr.addColorStop(1, c2);
+    g.fillStyle = gr; g.fillRect(0, 0, cv.width, cv.height);
+    g.globalAlpha = 0.16; g.fillStyle = '#fff';
+    const step = Math.max(8, cv.width / 32);
+    for (let y = step / 2; y < cv.height; y += step) for (let x = (y / step) % 2 ? step / 2 : 0; x < cv.width; x += step) { g.beginPath(); g.arc(x, y, step / 5, 0, 7); g.fill(); }
+    g.globalAlpha = 0.5; g.strokeStyle = '#000'; g.lineWidth = Math.max(2, cv.width / 128);
+    for (let k = 1; k < 4; k++) { g.beginPath(); g.moveTo(0, cv.height * k / 4); g.bezierCurveTo(cv.width / 3, cv.height * k / 4 - step, cv.width * 2 / 3, cv.height * k / 4 + step, cv.width, cv.height * k / 4); g.stroke(); }
+    void N; void src; void kind;
+    return cv.toDataURL('image/png');
+  }
+
   // ---------------------------------------------------------------- mods
   let seed = 11;
   function opt(label, colour, changes, textures, tags, extra) {
@@ -187,19 +205,49 @@
     const colours = ['black', 'white', 'crimson', 'navy', 'emerald', 'plum', 'sand', 'ivory', 'slate', 'rose', 'teal',
       'amber', 'olive', 'charcoal', 'lilac', 'copper', 'mint', 'burgundy', 'cobalt', 'pearl', 'smoke', 'gold'];
     const name = c => c[0].toUpperCase() + c.slice(1);
-    const luneOpts = colours.map((c, i) => opt(name(c), c, '1 material', 'Outfit 2K', i % 7 === 3 ? ['own shaders'] : [], { kind: i % 3 ? 'weave' : 'lace' }));
-    const scielOpts = colours.slice(0, 21).map((c, i) => opt(name(c), c, i < 4 ? 'Outfit mesh, 1 material' : '1 material', 'Outfit 2K', [], { kind: i % 2 ? 'weave' : 'stripe' }));
-    scielOpts[19] = opt('Pearl', null, '', '', [], { ok: false, error: 'Its files hold no outfit mesh or textures.' });
-    scielOpts[20] = opt('Smoke', null, '', '', [], { ok: false, error: 'Its files hold no outfit mesh or textures.' });
+    // texture-only colour options: no swatch saved and no sizes recorded (an earlier build)
+    const luneColor = colours.slice(0, 9).map((c, i) => opt(`${i < 2 ? 'Lace dress' : 'Plain dress'}: ${name(c)}`, null,
+      i < 2 ? '6 textures' : '4 textures', 'Outfit (size ?)', [], { _tex: i < 2 ? 6 : 4, _nosize: true }));
+    const scielOpts = ['sleeveless, barefoot', 'sleeveless, boots', 'sleeves, barefoot', 'sleeves, boots'].map((v, i) =>
+      opt(`Lace dress: ${v}`, ['plum', 'navy', 'teal', 'charcoal'][i], 'Outfit mesh, 2 materials, 4 textures, Blueprint',
+        'Body 2K, outfit 2K', ['physics'], { kind: 'lace', _bp: 'BP_CharacterSkin_ScielOutfit_Chic',
+          notes: ["One link in BP_CharacterSkin_ScielOutfit_Chic points to /Game/Characters/Sciel/Chic/MI_Chic_Trim_Old, which is in neither the game nor the mod; the game leaves it empty, as with the original mod."] }));
+    const scielColor = colours.slice(10, 21).map((c, i) => opt(name(c), c, i < 4 ? 'Outfit mesh, 1 material' : '1 material', 'Outfit 2K', [], { kind: i % 2 ? 'weave' : 'stripe' }));
+    scielColor[9] = opt('Pearl', null, '', '', [], { ok: false, error: 'Its files hold no outfit mesh or textures.' });
+    scielColor[10] = opt('Smoke', null, '', '', [], { ok: false, error: 'Its files hold no outfit mesh or textures.' });
+    const missing = scielOpts.map(o => `Sciel outfit \u00b7 ${o.label} (BP_CharacterSkin_ScielOutfit_Chic: 1 link to /Game/Characters/Sciel/Chic/MI_Chic_Trim_Old)`);
     return {
       id: 'Chic Variants', name: 'Chic Variants', characters: ['Lune', 'Sciel'], replaces: ['Chic'],
       size: 223346688, state: 'ready',
       rows: [
-        { id: 'Chic Variants/Lune Chic', label: 'Chic', character: 'Lune', options: luneOpts },
-        { id: 'Chic Variants/Sciel Chic', label: 'Chic', character: 'Sciel', options: scielOpts },
+        { id: 'Chic Variants/Lune color', label: 'Lune color', character: 'Lune', options: luneColor },
+        { id: 'Chic Variants/Sciel outfit', label: 'Sciel outfit', character: 'Sciel', options: scielOpts },
+        { id: 'Chic Variants/Sciel color', label: 'Sciel color', character: 'Sciel', options: scielColor },
       ],
-      skin: { has: false, text: '', swatches: [] }, overlaps: [],
-      notes: [{ level: 'warn', text: '2 options were skipped (Sciel · Chic: Pearl, Smoke). Select them in the list to see why.' }],
+      skin: { has: true, text: "Brings its own body textures (2K) for Sciel. They show only with this mod's outfits.",
+        swatches: [swatch('skin1', 'skin', 8)] },
+      overlaps: [{ mod: 'Lune Outfit Options', text: "Both change Lune's body textures: T_Lune_Body_BaseColor, T_Lune_Body_Normal and 1 more. In game, the one picked last shows.",
+        files: ['/Game/Characters/Heros/Lune/Body/T_Lune_Body_BaseColor', '/Game/Characters/Heros/Lune/Body/T_Lune_Body_Normal',
+          '/Game/Characters/Heros/Lune/Body/T_Lune_Body_ORM'] }],
+      notes: [
+        { level: 'warn', text: "2 of 24 options couldn't be prepared and aren't in the menu: Sciel color \u00b7 Pearl and Sciel color \u00b7 Smoke.",
+          items: ['Sciel color \u00b7 Pearl', 'Sciel color \u00b7 Smoke'], what: 'options' },
+        { level: 'info', text: "4 options link to files the mod doesn't include: Sciel outfit \u00b7 Lace dress: sleeveless, barefoot, Sciel outfit \u00b7 Lace dress: sleeveless, boots, Sciel outfit \u00b7 Lace dress: sleeves, barefoot and 1 more.",
+          items: missing, what: 'options' },
+        { level: 'warn', text: '"Chic Variants Old" has 3 of this mod\'s new files (T_Chic_Trim_D, T_Chic_Trim_N and MI_Chic_Trim). Two versions of one mod? Keep only one in the library.',
+          items: ['/Game/Characters/Sciel/Chic/MI_Chic_Trim', '/Game/Characters/Sciel/Chic/T_Chic_Trim_D', '/Game/Characters/Sciel/Chic/T_Chic_Trim_N'], what: 'files' },
+      ],
+    };
+  }
+
+  function feline() {
+    const one = (label, colour) => ({ label, character: 'Lune', id: `Feline Sorceress/${label}`,
+      options: [opt('on', colour, 'Body mesh, 2 materials', 'Body 2K', ['physics'], { kind: 'weave' })] });
+    return {
+      id: 'Feline Sorceress', name: 'Feline Sorceress', characters: ['Lune'], replaces: ['Base body'], size: 238026752, state: 'ready',
+      rows: [one('Lune Feline Sorceress Barefoot', 'night'), one('Lune Sorceress No Ears No Tail', 'night'), one('Lune Feline Sorceress', 'plum')],
+      skin: { has: true, text: 'Brings its own body textures (2K) for Lune.', swatches: [swatch('skin2', 'skin', 9)] },
+      overlaps: [], notes: [],
     };
   }
 
@@ -216,10 +264,49 @@
     };
   }
 
+  const slug = t => String(t).replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  function enrich(d) {
+    const base = `/Game/Mods/${slug(d.id)}`;
+    const skin = [];
+    d.rows.forEach(r => r.options.forEach((o, i) => {
+      o.id = `${d.id}/${r.label}/${slug(o.label)}_P`;
+      const stem = `${slug(r.character || '')}_${slug(o.label)}`;
+      const files = [], images = [];
+      if (o.ok !== false) {
+        if (/outfit mesh/i.test(o.changes)) files.push({ path: `${base}/Meshes/SK_${slug(r.character)}_${slug(r.label)}_Skin`, type: 'Outfit mesh', game: true });
+        const mats = Number((/(\d+) materials?/.exec(o.changes) || [0, 0])[1]);
+        for (let k = 0; k < mats; k++) files.push({ path: `${base}/Materials/MI_${stem}_${k + 1}`, type: 'Material', game: k === 0 });
+        const big = /4K/.test(o.textures) ? 4096 : /1K/.test(o.textures) ? 1024 : 2048;
+        const nt = o._tex || (o.textures ? 2 : 0);
+        const kinds = ['BaseColor', 'Normal', 'ORM', 'Mask', 'Emissive', 'Detail'];
+        for (let k = 0; k < nt; k++) {
+          const body = /Body/.test(o.textures) && k === 1;
+          const path = body ? `/Game/Characters/Heros/${r.character}/Body/T_${r.character}_Body_BaseColor` : `${base}/Textures/T_${stem}_${kinds[k]}`;
+          files.push({ path, type: body ? 'Body texture' : 'Texture', game: !!o._nosize || body });
+          const im = { ref: `${o.id}|${path}`, name: path.split('/').pop(), path, kind: body ? 'Body' : 'Outfit',
+            width: o._nosize ? 0 : big, height: o._nosize ? 0 : big, format: o._nosize ? '' : (k === 1 && !body ? 'BC5' : 'BC7'),
+            swatch: k === 0 ? o.swatch : body ? (d.skin.swatches[0] || null) : null };
+          images.push(im);
+          if (body && im.swatch && !skin.some(x => x.path === path)) skin.push(im);
+        }
+        if (o._bp) files.push({ path: `/Game/Characters/Sciel/Chic/${o._bp}`, type: 'Blueprint', game: true });
+        if ((o.tags || []).includes('physics')) files.push({ path: `${base}/Physics/PA_${stem}`, type: 'Physics', game: false });
+      }
+      images.sort((a, b) => (b.swatch ? 1 : 0) - (a.swatch ? 1 : 0));
+      o.files = files;
+      o.images = images;
+      o.missing = o._bp ? [{ in: `/Game/Characters/Sciel/Chic/${o._bp}`, name: o._bp, links: 1, texture: false,
+        names: ['/Game/Characters/Sciel/Chic/MI_Chic_Trim_Old'] }] : [];
+      delete o._tex; delete o._nosize; delete o._bp;
+    }));
+    if (d.skin.has) d.skin.images = skin.length ? skin : d.skin.swatches.map((s, i) => ({ ref: '', name: `T_Body_${i + 1}`, path: '', kind: 'Body', width: 2048, height: 2048, format: 'BC7', swatch: s }));
+    d.overlaps.forEach(o => { if (!o.files) o.files = ['/Game/Characters/Heros/Lune/Body/T_Lune_Body_BaseColor']; });
+    return d;
+  }
   function finish(d) {
     d.folder = LIB + '\\' + d.id;
     d.options = d.rows.reduce((n, r) => n + r.options.length, 0);
-    return d;
+    return enrich(d);
   }
   function summary(d) {
     const sw = [];
@@ -227,6 +314,7 @@
     return {
       id: d.id, name: d.name, state: d.state, characters: d.characters, replaces: d.replaces,
       options: d.options, rows: d.rows.length, size: d.size, swatches: sw, notes: d.notes.length, skin: !!d.skin.has,
+      note_level: d.notes.some(n => n.level === 'warn') ? 'warn' : d.notes.length ? 'info' : null,
     };
   }
 
@@ -242,11 +330,12 @@
   const M = {
     state: okState(),
     settings: { library: LIB, watch_game: true },
-    mods: [lune(), flower(), herald(), claudia(), chic()].map(finish),
+    mods: [lune(), flower(), herald(), claudia(), chic(), feline()].map(finish),
     jobs: [],
     changed: 1,
     nextJob: 1,
-    monitor: { watching: true, game_running: false, since: null, menu_active: false, last_activity: null, problems: [], on_screen: [], tail: [] },
+    monitor: { watching: true, game_running: false, since: null, menu_active: false, last_activity: null, ended: null, date: null, problems: [], on_screen: [], tail: [] },
+    files: {},
   };
 
   // ---------------------------------------------------------------- jobs (simulated)
@@ -375,6 +464,34 @@
       if (!m) return { ok: false, error: `No mod named "${id}".` };
       return { ok: true, jobs: [newJob(m.name, 'remove', m.size, m, { _delete: !!del }).id] };
     },
+    reinstall_mods: ids => {
+      const jobs = [], errors = [];
+      (ids || []).forEach(id => { const r = api.reinstall_mod(id); if (r.ok) jobs.push(...r.jobs); else errors.push({ id, error: r.error }); });
+      return jobs.length ? { ok: true, jobs, errors } : { ok: false, error: 'No mods given.', errors };
+    },
+    remove_mods: (ids, del) => {
+      const jobs = [], errors = [];
+      (ids || []).forEach(id => { const r = api.remove_mod(id, del); if (r.ok) jobs.push(...r.jobs); else errors.push({ id, error: r.error }); });
+      return jobs.length ? { ok: true, jobs, errors } : { ok: false, error: 'No mods given.', errors };
+    },
+    texture_preview: (id, ref, px) => {
+      const m = M.mods.find(x => x.id === id);
+      if (!m) return { ok: false, error: `No mod named "${id}".` };
+      let im = null;
+      m.rows.forEach(r => r.options.forEach(o => o.images.forEach(i => { if (i.ref === ref) im = i; })));
+      (m.skin.images || []).forEach(i => { if (i.ref && i.ref === ref) im = i; });
+      if (!im) return { ok: false, error: 'That image is gone.' };
+      const tw = im.width || 2048, side = Math.min(px || 1024, tw);
+      const colour = Object.keys(COL)[(ref.length * 7) % Object.keys(COL).length];
+      return { ok: true, url: bigPicture(colour, im.kind === 'Body' ? 'skin' : 'lace', side), width: side, height: side,
+        tex_width: tw, tex_height: im.height || tw, format: im.format || 'BC7', name: im.name, path: im.path, source: 'texture',
+        note: side < tw ? `Shown at ${side} x ${side}, a smaller copy (mip) of the ${tw} x ${tw} texture.` : '' };
+    },
+    monitor_file: which => {
+      const f = M.files[which];
+      return f ? Object.assign({ which, exists: true }, f) : { which, exists: false, watching: false, game_running: false, since: null,
+        menu_active: false, last_activity: null, ended: null, date: null, problems: [], on_screen: [], tail: [], files: [], lines: 0 };
+    },
     install_menu: () => {
       if (!M.state.game.found) return { ok: false, error: 'Set the game folder first.', state: M.state };
       M.state.menu = { installed: true, version: M.state.menu.bundled, bundled: M.state.menu.bundled, update: false };
@@ -455,7 +572,25 @@
         { slot: 'Sciel · Flower', variant: 'Altered', shown: 0, total: 1, worn: false },
       ],
       tail: tailLines(),
+      ended: '21:10:44', date: '2026-10-11',
     };
+    problemLines(M.monitor);
+  }
+
+  function problemLines(m) {
+    const by = { 'missing:chic-sciel-pearl': /Pearl/, watchdog: /WATCHDOG/, 'hidden:sciel-chic': /hidden by Sciel/ };
+    m.problems.forEach(p => { p.lines = by[p.key] ? m.tail.filter(l => by[p.key].test(l)) : []; });
+  }
+
+  function presetLast() {
+    presetRunning();
+    M.state.game_running = false;
+    Object.assign(M.monitor, { game_running: false, ended: '21:10:44', date: '2026-10-11' });
+    M.files.previous = { watching: false, game_running: false, since: '19:40:02', menu_active: true, last_activity: '20:02:31',
+      ended: '20:02:31', date: '2026-10-11', on_screen: [], files: ['...\\live_log_previous.txt'], lines: 3,
+      problems: [{ key: 'load:T_Old', level: 'warn', title: "Couldn't load T_Old", detail: "/Game/Mods/Old/T_Old didn't load, so that piece stays the game's own.",
+        hint: 'Reinstall the mod it belongs to in the app.', first: '19:52:10', last: '19:52:10', count: 1, lines: ['19:52:10 log: could not load /Game/Mods/Old/T_Old.T_Old'] }],
+      tail: ['19:40:02 session start 2026-10-11 19:40:02', '19:52:10 log: could not load /Game/Mods/Old/T_Old.T_Old', '20:02:31 key DEL'] };
   }
 
   function tailLines() {
@@ -536,6 +671,38 @@
     gamelog_idle: () => ui => ui.selectTab('log'),
     confirm_remove: () => async ui => { ui.selectTab('mods'); ui.selectMod('Lune Outfit Options'); await wait(120); ui.selectRow(3); ui.askRemove(); },
     drop_overlay: () => ui => { ui.selectTab('mods'); ui.showDrop(true); },
+    mods_bulk: () => async ui => {
+      ui.selectTab('mods');
+      ui.setColumns('mods', [24, 156, 90, 112, 60, 56, 92]);
+      ui.selectMod('Chic Variants');
+      ui.check(['Chic Variants', 'Claudia Set', 'Feline Sorceress']);
+      await wait(150);
+    },
+    mods_expanded: () => async ui => {
+      ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(120);
+      ui.selectRow(1); ui.selectOption(0); await wait(50); ui.expandAll(); await wait(50);
+      document.querySelector('#details-body').scrollTop = 200;
+    },
+    mods_lune_color: () => async ui => { ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(120); ui.selectRow(0); ui.selectOption(0); },
+    ctx_details: () => async ui => {
+      ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(120); ui.selectRow(1); ui.selectOption(1); await wait(50);
+      ui.showCtxAt('#optlist tbody tr[data-opt="1"]', 260, 330);
+    },
+    ctx_modlist: () => async ui => {
+      ui.selectTab('mods'); ui.check(['Chic Variants', 'Claudia Set']); ui.selectMod('Chic Variants'); await wait(120);
+      ui.showCtxAt('#modlist tbody tr[data-id="Chic Variants"]', 120, 150);
+    },
+    image_viewer: () => async ui => {
+      ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(120); ui.selectRow(1); ui.selectOption(0); await wait(50);
+      ui.viewImage('opt', 0, 0); await wait(300);
+    },
+    confirm_bulk_remove: () => async ui => {
+      ui.selectTab('mods'); ui.selectMod('Chic Variants');
+      ui.check(['Chic Variants', 'Claudia Set', 'Feline Sorceress', 'Infernal Herald']); await wait(120); ui.askRemoveMany();
+    },
+    gamelog_filter: () => { presetRunning(); return async ui => { ui.selectTab('log'); await wait(150); ui.filterProblem('watchdog'); }; },
+    gamelog_last: () => { presetLast(); return async ui => { ui.setLogSource('this'); ui.selectTab('log'); await wait(150); }; },
+    gamelog_previous: () => { presetLast(); return async ui => { ui.setLogSource('previous'); ui.selectTab('log'); await wait(250); ui.filterProblem('load:T_Old'); }; },
     help: () => ui => ui.showHelp(),
   };
   const wait = ms => new Promise(r => setTimeout(r, ms));

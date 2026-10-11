@@ -38,6 +38,27 @@ def split_camel(word):
     return re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ', word).split()
 
 
+def humanize(name):
+    """One CamelCase word as words: 'LuneFelineSorceressBarefoot' -> 'Lune Feline Sorceress Barefoot'.
+    Anything with spaces or other characters stays as it is."""
+    s = (name or '').strip()
+    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9]*', s):
+        return s
+    words = split_camel(s)
+    return ' '.join(words) if len(words) >= 2 else s
+
+
+def base_body_name(option_names, mod_name=''):
+    """What to call options that replace a character's base body mesh (SK_<Char>_Placeholder):
+    the words several options share ('Expedition'), else 'Base body'. Never the mod's own name or
+    a single option's folder name."""
+    if len([n for n in option_names if n]) >= 2:
+        w = humanize(common_words(option_names))
+        if w and w.lower() != (mod_name or '').strip().lower():
+            return w
+    return 'Base body'
+
+
 def outfit_name(pkg):
     """Outfit name of a skeletal mesh: SK_Lune_Clea_Skin -> 'Clea', SK_Lune_CivilianSkirt_skin ->
     'Civilian Skirt', SK_Lune_Bikini_A_skin -> 'Bikini A'. None for SK_<Character>_Placeholder
@@ -96,7 +117,7 @@ def row_label(key, mod_name, rels=None):
     'Variants' (options straight in the mod's folder) take the mod's name."""
     if not key or key == 'Main' or (key == 'Variants' and rels and all('/' not in r for r in rels)):
         return mod_name
-    return pretty(key.lstrip('_')) or key
+    return humanize(pretty(key.lstrip('_'))) or key
 
 
 def size_label(px):
@@ -368,12 +389,59 @@ def texture_kinds(classes, outfit_mod):
     return kinds
 
 
-def texture_summary(classes, outfit_mod):
-    """'Body 4K, outfit 2K' or ''."""
+def texture_summary(classes, outfit_mod, guessed=False):
+    """'Body 4K, outfit 2K' or ''. A prepared option whose texture sizes weren't recorded says so:
+    'Outfit (size ?)'."""
     kinds = texture_kinds(classes, outfit_mod)
-    parts = [(k + ' ' + size_label(kinds[k])).strip() for k in ('body', 'outfit', 'textures') if k in kinds]
+    unknown = '' if guessed else ' (size ?)'
+    parts = [f'{k} {size_label(kinds[k])}' if kinds[k] else k + unknown for k in ('body', 'outfit', 'textures')
+             if k in kinds]
     text = ', '.join(parts)
     return text[:1].upper() + text[1:]
+
+
+_TYPE_ORDER = ('Outfit mesh', 'Body mesh', 'Mesh', 'Material', 'Body texture', 'Texture', 'Blueprint', 'Physics',
+               'Skeleton', 'Asset label')
+
+
+def file_type(pkg, c):
+    """What a package is, in words: 'Outfit mesh', 'Material', 'Body texture'..."""
+    cls = _cls(c)
+    if cls == 'SkeletalMesh':
+        if is_skeletal_leaf(pkg):
+            return 'Body mesh' if outfit_name(pkg) is None else 'Outfit mesh'
+        return 'Mesh'
+    if cls == 'StaticMesh':
+        return 'Mesh'
+    if cls.startswith('Material'):
+        return 'Material'
+    if cls.startswith('Texture'):
+        return 'Body texture' if is_body_texture(pkg, c) else 'Texture'
+    if is_blueprint(cls):
+        return 'Blueprint'
+    if cls == 'PhysicsAsset':
+        return 'Physics'
+    if cls == 'Skeleton':
+        return 'Skeleton'
+    if cls == 'PrimaryAssetLabel':
+        return 'Asset label'
+    return cls or 'File'
+
+
+def option_files(classes):
+    """[{path, type, game}] of a variant: every package, meshes first; game: it replaces a game file."""
+    out = [{'path': p, 'type': file_type(p, c), 'game': bool((c or {}).get('override'))} for p, c in classes.items()]
+    order = {t: i for i, t in enumerate(_TYPE_ORDER)}
+    return sorted(out, key=lambda f: (order.get(f['type'], len(order)), leaf(f['path']).lower()))
+
+
+def format_label(fmt):
+    """'PF_BC7' -> 'BC7', 'PF_DXT1' -> 'DXT1'."""
+    return re.sub(r'^PF_', '', fmt or '')
+
+
+def is_label(c):
+    return _cls(c) == 'PrimaryAssetLabel'
 
 
 _PLAIN_ERRORS = [
@@ -407,18 +475,25 @@ def plain_error(err):
     return first if first.endswith(('.', '!', '?', ')')) else first + '.'
 
 
-def option_notes(r, classes):
-    """Plain sentences from a variant's report entry."""
+def option_notes(r, classes, names=None):
+    """Plain sentences from a variant's report entry. names: {package: [missing package paths]}
+    when they could be read from the mod's files (missing_names())."""
     out = []
     for p, n in sorted((r.get('unresolved') or {}).items()):
         name = leaf(p)
         one = n == 1
+        known = list((names or {}).get(p) or [])
+        if known:
+            shown = ', '.join(known[:2]) + (f' and {len(known) - 2} more' if len(known) > 2 else '')
+            target = shown + (', which is' if len(known) == 1 else ', which are') + ' in neither the game nor the mod'
+        else:
+            target = "a file the mod doesn't include"
         if _cls(classes.get(p)).startswith('Material'):
             out.append(f"{'One texture link' if one else f'{n} texture links'} in {name} point{'s' if one else ''} to "
-                       f"a file the mod doesn't include; the menu fills {'it' if one else 'them'} in game.")
+                       f"{target}; the menu fills {'it' if one else 'them'} in game.")
         else:
-            out.append(f"{'One link' if one else f'{n} links'} in {name} point{'s' if one else ''} to a file the mod "
-                       f"doesn't include; the game leaves {'it' if one else 'them'} empty, as with the original mod.")
+            out.append(f"{'One link' if one else f'{n} links'} in {name} point{'s' if one else ''} to {target}; "
+                       f"the game leaves {'it' if one else 'them'} empty, as with the original mod.")
     for n in r.get('notes') or []:
         if "using the game's Skeleton" in n:
             out.append("Uses the game's skeleton, so animations keep working.")
@@ -459,6 +534,29 @@ def data_url(path):
     return _DATA_CACHE[key]
 
 
+def opt_name(row, opt, multi_rows=True):
+    """'Lune color · Lace dress: black' (the row only when the mod has several)."""
+    return f'{row} \u00b7 {opt}' if multi_rows and row and row != opt else opt
+
+
+def name_list(pairs, multi_rows=True, limit=3):
+    """[(row, option)] -> 'A, B, C and 8 more'."""
+    names = [opt_name(r, o, multi_rows) for r, o in pairs]
+    return few(names, limit)
+
+
+def few(names, limit=3):
+    names = list(names)
+    if len(names) <= limit:
+        return ', '.join(names[:-1]) + (' and ' if len(names) > 1 else '') + (names[-1] if names else '')
+    return ', '.join(names[:limit]) + f' and {len(names) - limit} more'
+
+
+def names_of(paths, limit=3):
+    """Package paths -> their last parts, 'T_A, T_B and 2 more'."""
+    return few([leaf(p) for p in paths], limit)
+
+
 # ------------------------------------------------------------------------------ the library view
 
 class View:
@@ -476,6 +574,7 @@ class View:
         self._reports = {}
         self._all_reports = None
         self._keys = {}
+        self._shared = {}
 
     # -- discovery
     def mod_ids(self):
@@ -576,8 +675,10 @@ class View:
                     out.append((p, texs[i] if i < len(texs) else None))
         return out
 
-    def describe(self, mod_id, swatches=True):
-        """Everything about one mod: the ModDetails shape plus a few fields for the summary."""
+    def describe(self, mod_id, swatches=True, names=False):
+        """Everything about one mod: the ModDetails shape plus a few fields for the summary.
+        names: also look up the names of files that links point to but nobody has (slower: reads the
+        mod's paks; mod_details only)."""
         folder = self.folder(mod_id)
         reg = self.by_name.get(mod_id)
         if not folder and not reg:
@@ -603,8 +704,10 @@ class View:
                     all_classes.update(guessed_classes(folder_packages(os.path.join(folder, *rel.split('/')) if rel else folder)))
         outfit_mod = any(_cls(c) == 'SkeletalMesh' and is_skeletal_leaf(p) for p, c in all_classes.items())
 
-        rows, chars_all, replaces, mod_swatches, skin_swatches = [], [], [], [], []
-        n_opts = n_failed = n_unresolved = 0
+        rows, chars_all, replaces, mod_swatches, skin_swatches, skin_images = [], [], [], [], [], []
+        n_opts = n_failed = 0
+        unresolved_opts = []            # (row label, option label, {package: links})
+        names_cache = {}                # missing_names(): the mod's own packages, listed once
         tex_body = 0
         has_body = False
         installed_variants = 0
@@ -635,15 +738,15 @@ class View:
                     guessed = True
                 err = r.get('error')
                 ok, error = True, None
-                notes = option_notes(r, classes) if not guessed else []
+                unresolved = {p: int(n) for p, n in (r.get('unresolved') or {}).items() if n}
+                found = self.missing_names(folder, rel, unresolved, names_cache) if (names and unresolved and folder) else {}
+                notes = option_notes(r, classes, found) if not guessed else []
                 if err and r.get('kept_previous'):
                     notes.insert(0, f"Couldn't be prepared this time ({plain_error(err).rstrip('.')}); the menu keeps "
                                     'the earlier build.')
                 elif err:
                     ok, error = False, plain_error(err)
                     n_failed += 1
-                if r.get('unresolved'):
-                    n_unresolved += 1
                 for p, c in classes.items():
                     ch = character_of(p)
                     if ch and (_cls(c) == 'SkeletalMesh' or c.get('override')):
@@ -662,20 +765,27 @@ class View:
                     tags.append('own shaders')
                 sw = self.variant_swatches(r, regv, out_dir) if swatches else []
                 swatch = data_url(sw[0][0]) if sw else None
-                for p, tex in sw:
-                    if tex and is_body_texture(tex, classes.get(tex)):
-                        if len(skin_swatches) < 4:
-                            u = data_url(p)
-                            if u and u not in skin_swatches:
-                                skin_swatches.append(u)
+                images = self.option_images(vid, classes, sw, outfit_mod)
+                for img in images:
+                    if img['kind'] == 'Body' and img['swatch']:
+                        if len(skin_swatches) < 4 and img['swatch'] not in skin_swatches:
+                            skin_swatches.append(img['swatch'])
+                        if not any(x['path'] == img['path'] and x['swatch'] == img['swatch'] for x in skin_images):
+                            skin_images.append(img)
                 if swatch:
                     mod_swatches.append((len(options), swatch))
                 shown = option_label(base, label if label != mod_id else None)
                 if ': ' in (reloc_label or '') and rel.count('/') >= 2:
                     shown = reloc_label.split(': ', 1)[0] + ': ' + shown
-                options.append({'label': shown, 'changes': changes_summary(classes),
-                                'textures': texture_summary(classes, outfit_mod), 'tags': tags, 'swatch': swatch,
-                                'ok': ok, 'error': error, 'notes': notes})
+                missing = [{'in': p, 'name': leaf(p), 'links': n, 'texture': _cls(classes.get(p)).startswith('Material'),
+                            'names': list(found.get(p) or [])} for p, n in sorted(unresolved.items())]
+                if unresolved and not guessed:
+                    unresolved_opts.append((label, shown, missing))
+                options.append({'id': vid, 'label': shown, 'changes': changes_summary(classes),
+                                'textures': texture_summary(classes, outfit_mod, guessed), 'tags': tags, 'swatch': swatch,
+                                'ok': ok, 'error': error, 'notes': notes,
+                                'files': option_files(classes) if not guessed else [],
+                                'images': images, 'missing': missing})
             ch = slot.get('character') or character_of(key) or character_of(mod_id)
             if not ch and len(row_chars) == 1:
                 ch = next(iter(row_chars))
@@ -685,7 +795,7 @@ class View:
             for m in sorted(row_meshes):
                 n = outfit_name(m)
                 if n is None:
-                    n = common_words(row_names) or 'Base body'
+                    n = base_body_name(row_names, mod_id)
                 if n not in replaces:
                     replaces.append(n)
             rows.append({'id': f'{mod_id}/{key}', 'label': label, 'character': ch, 'options': options})
@@ -701,28 +811,46 @@ class View:
         else:
             state = 'not_installed'
 
+        multi_rows = len(rows) > 1
         notes = []
         if state == 'failed':
             notes.append({'level': 'warn', 'text': "None of the options could be prepared for the in-game menu."})
         elif n_failed:
+            bad = [(row['label'], o['label']) for row in rows for o in row['options'] if o['ok'] is False]
             notes.append({'level': 'warn', 'text': f"{n_failed} of {n_opts} options couldn't be prepared and aren't "
-                                                   'in the menu.'})
+                                                   f"in the menu: {name_list(bad, multi_rows)}.",
+                          'items': [opt_name(rl, ol, multi_rows) for rl, ol in bad], 'what': 'options'})
         if missing_outputs:
             notes.append({'level': 'warn', 'text': 'Some prepared files are missing. Reinstall the mod.'})
-        if n_unresolved:
-            notes.append({'level': 'info', 'text': f"{plural(n_unresolved, 'option')} {'links' if n_unresolved == 1 else 'link'}"
-                                                   " to files the mod doesn't include (see the options)."})
+        if unresolved_opts:
+            n = len(unresolved_opts)
+            items = []
+            for rl, ol, miss in unresolved_opts:
+                where = '; '.join(
+                    f"{m['name']}: {plural(m['links'], 'link')}" + (f" to {few(m['names'], 2)}" if m['names'] else '')
+                    for m in miss)
+                items.append(f'{opt_name(rl, ol, multi_rows)} ({where})')
+            notes.append({'level': 'info', 'text': f"{plural(n, 'option')} {'links' if n == 1 else 'link'} to files the "
+                                                   f"mod doesn't include: "
+                                                   f"{name_list([(rl, ol) for rl, ol, _m in unresolved_opts], multi_rows)}.",
+                          'items': items, 'what': 'options'})
         if folder:
             for part in _t()['rules'].extra_parts(folder):
                 notes.append({'level': 'info', 'text': f'Also has a {part} part. Install that part by hand, as the '
                                                        'mod page says.'})
         overlaps = self.overlaps(mod_id) if reg else []
         if reg:
-            mine = set(reg.get('shared') or [])
+            mine = self.shared_files(reg)
             for other in self.registry:
-                if other['name'] != mod_id and mine & set(other.get('shared') or []):
-                    notes.append({'level': 'warn', 'text': f'"{other["name"]}" has some of the same new files. Two '
-                                                           'versions of one mod? Keep only one in the library.'})
+                if other['name'] == mod_id:
+                    continue
+                common = sorted(set(mine) & set(self.shared_files(other)))
+                if common:
+                    files = sorted({mine[p] for p in common}, key=str.lower)
+                    notes.append({'level': 'warn',
+                                  'text': f'"{other["name"]}" has {len(files)} of this mod\'s new files '
+                                          f'({names_of(files)}). Two versions of one mod? Keep only one in the library.',
+                                  'items': files, 'what': 'files'})
 
         who = ' and '.join(chars_all) if chars_all else ''
         if has_body:
@@ -753,10 +881,60 @@ class View:
         return {
             'id': mod_id, 'name': mod_id, 'characters': chars_all, 'replaces': replaces, 'options': n_opts,
             'size': size_bytes, 'folder': folder, 'state': state, 'rows': rows,
-            'skin': {'has': has_body, 'text': text, 'swatches': skin_swatches},
+            'skin': {'has': has_body, 'text': text, 'swatches': skin_swatches, 'images': skin_images},
             'overlaps': overlaps, 'notes': notes,
             '_swatches': summary_swatches,
         }
+
+    def option_images(self, vid, classes, sw, outfit_mod):
+        """The textures of one option for the image viewer: [{ref, name, path, kind, width, height,
+        format, swatch}], the ones with a swatch first. ref = '<variant id>|<texture package>' (for
+        texture_preview), or '<variant id>|#<n>' for a swatch whose texture isn't recorded."""
+        by_tex, loose = {}, []
+        low = {k.lower(): k for k in classes}
+        for i, (p, tex) in enumerate(sw):
+            key = low.get(tex.lower()) if tex else None
+            if key and key not in by_tex:
+                by_tex[key] = p
+            elif not tex:
+                loose.append((i, p))
+        out = []
+        for p, c in classes.items():
+            if not _cls(c).startswith('Texture'):
+                continue
+            kind = 'Body' if is_body_texture(p, c) else ('Outfit' if outfit_mod else 'Texture')
+            out.append({'ref': f'{vid}|{p}', 'name': leaf(p) or c.get('object') or p, 'path': p, 'kind': kind,
+                        'width': int(c.get('width') or 0), 'height': int(c.get('height') or 0),
+                        'format': format_label(c.get('format')), 'swatch': data_url(by_tex[p]) if p in by_tex else None})
+        order = {t: i for i, t in enumerate(by_tex)}
+        out.sort(key=lambda x: (order.get(x['path'], len(order)), x['name'].lower()))
+        for i, p in loose:
+            u = data_url(p)
+            if u:
+                out.insert(0, {'ref': f'{vid}|#{i}', 'name': os.path.basename(p), 'path': '', 'kind': '',
+                               'width': 0, 'height': 0, 'format': '', 'swatch': u})
+        return out
+
+    def shared_files(self, mod):
+        """{lower-case path: path} of a relocated mod's shared (mod-only) files, without its
+        PrimaryAssetLabels: cook metadata that does nothing in game, which two different mods of one
+        author often share."""
+        if mod['name'] in self._shared:
+            return self._shared[mod['name']]
+        labels, case = set(), {}
+        for s in mod.get('slots', []):
+            for v in s.get('variants', []):
+                for p, c in (v.get('classes') or {}).items():
+                    case.setdefault(p.lower(), p)
+                    if is_label(c):
+                        labels.add(p.lower())
+        out = {}
+        for p in mod.get('shared') or []:
+            low = p.lower()
+            if low not in labels:
+                out[low] = case.get(low, p)
+        self._shared[mod['name']] = out
+        return out
 
     def _variant_keys(self, mod):
         """{(character, original path): class info} of a relocated mod's game overrides."""
@@ -775,6 +953,8 @@ class View:
         return out
 
     def overlaps(self, mod_id):
+        """[{mod, text, files}]: other relocated mods that replace the same game files for the same
+        character. files: those game paths."""
         mod = self.by_name.get(mod_id)
         if not mod:
             return []
@@ -783,12 +963,13 @@ class View:
         for other in self.registry:
             if other['name'] == mod_id:
                 continue
-            common = set(mine) & set(self._variant_keys(other))
+            theirs = self._variant_keys(other)
+            common = {k for k in set(mine) & set(theirs) if not is_label(mine[k]) and not is_label(theirs[k])}
             if not common:
                 continue
             chars = sorted({c for c, _p in common if c})
             who = ' and '.join(chars)
-            pk = sorted({p for _c, p in common})
+            pk = sorted({p for _c, p in common}, key=str.lower)
             meshes = sorted({k[1] for k in common if _cls(mine[k]) == 'SkeletalMesh' or is_skeletal_leaf(k[1])})
             if meshes:
                 names = []
@@ -799,11 +980,24 @@ class View:
                 what = (f"{who}'s " if who else 'the ') + ' and '.join(names) + (' outfit' if len(names) == 1 else ' outfits')
                 text = f'Both replace {what}.'
             elif any(is_body_texture(p) for p in pk):
-                text = f"Both change {who + chr(39) + 's' if who else 'the'} body textures."
+                text = f"Both change {who + chr(39) + 's' if who else 'the'} body textures: {names_of(pk)}."
             else:
-                text = f"Both change {plural(len(pk), 'game file')}" + (f' of {who}.' if who else '.')
-            res.append({'mod': other['name'], 'text': text + ' In game, the one picked last shows.'})
+                text = f"Both change {plural(len(pk), 'game file')}" + (f' of {who}' if who else '') + f': {names_of(pk)}.'
+            res.append({'mod': other['name'], 'text': text + ' In game, the one picked last shows.', 'files': pk})
         return res
+
+    # -- names of files that links point to but nobody has
+
+    def missing_names(self, folder, rel, unresolved, cache=None):
+        """{package: [paths]} of the files the links in `unresolved` ({package: count}) point to,
+        read from the option's own paks (the zen package keeps the names of the packages it imports;
+        retoc drops the ones it can't find). {} when they can't be read."""
+        try:
+            from . import assets
+            return assets.missing_names(self, folder, os.path.join(folder, *rel.split('/')) if rel else folder,
+                                        unresolved, cache)
+        except Exception:
+            return {}
 
 
 def summary_of(d):
@@ -826,7 +1020,7 @@ def list_mods(view):
 
 
 def mod_details(view, mod_id):
-    d = view.describe(mod_id)
+    d = view.describe(mod_id, names=True)
     if d is None:
         return None
     d = dict(d)

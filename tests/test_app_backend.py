@@ -11,6 +11,7 @@ Optional fixtures (read from the environment; the parts that need them are skipp
 """
 import base64
 import json
+import struct
 import os
 import shutil
 import subprocess
@@ -75,9 +76,12 @@ PLACEHOLDER = '/Game/Characters/Heros/Lune/SK_Lune_Placeholder'
 SUMMARY_KEYS = {'id', 'name', 'state', 'characters', 'replaces', 'options', 'rows', 'size', 'swatches', 'notes', 'skin', 'note_level'}
 DETAIL_KEYS = {'id', 'name', 'characters', 'replaces', 'options', 'size', 'folder', 'state', 'rows', 'skin',
                'overlaps', 'notes'}
-OPTION_KEYS = {'label', 'changes', 'textures', 'tags', 'swatch', 'ok', 'error', 'notes'}
+OPTION_KEYS = {'id', 'label', 'changes', 'textures', 'tags', 'swatch', 'ok', 'error', 'notes', 'files', 'images',
+               'missing'}
+IMAGE_KEYS = {'ref', 'name', 'path', 'kind', 'width', 'height', 'format', 'swatch'}
 STATE_KEYS = {'version', 'first_run', 'game', 'ue4ss', 'menu', 'library', 'game_running', 'tools'}
-MONITOR_KEYS = {'watching', 'game_running', 'since', 'menu_active', 'last_activity', 'problems', 'on_screen', 'tail'}
+MONITOR_KEYS = {'watching', 'game_running', 'since', 'menu_active', 'last_activity', 'ended', 'date', 'problems',
+                'on_screen', 'tail'}
 
 
 def png(w=8, h=8):
@@ -195,6 +199,24 @@ def test_names():
           and L.option_label('OutfitA_P', 'Lune outfit') == 'OutfitA',
           [L.option_label('843_Clea - Shorter Skirt.', 'Clea'), L.option_label('843 - Clea (No Thights)', 'Clea')])
     check('texture size labels', [L.size_label(x) for x in (4096, 2048, 1024, 512, 0)] == ['4K', '2K', '1K', '512 px', ''])
+    check('CamelCase folder names as words; other names stay', L.humanize('LuneFelineSorceressBarefoot')
+          == 'Lune Feline Sorceress Barefoot' and L.humanize('SemiNude') == 'Semi Nude' and L.humanize('Clea') == 'Clea'
+          and L.humanize('only Lune mod fix') == 'only Lune mod fix' and L.humanize('BTLS') == 'BTLS'
+          and L.humanize('Lace_dress') == 'Lace_dress', [L.humanize('LuneFelineSorceressBarefoot'), L.humanize('SemiNude')])
+    check('Replaces for the base body: shared words of several options, never the mod name or one folder name',
+          L.base_body_name(['840 Expedition 1 (Crop Top)', '840 Expedition 2'], 'Lune Outfit Options') == 'Expedition'
+          and L.base_body_name(['Fitting Outfits - Lune'], 'Fitting Outfits - Lune') == 'Base body'
+          and L.base_body_name(['LuneFelineSorceressBarefoot'], 'Lune Feline Sorceress') == 'Base body'
+          and L.base_body_name(['Neutral Set A', 'Neutral Set B'], 'Neutral Set') == 'Base body',
+          [L.base_body_name(['Fitting Outfits - Lune'], 'Fitting Outfits - Lune')])
+    tex = {'/Game/X/T_A_D': {'class': 'Texture2D'}, '/Game/X/T_Body_D': {'class': 'Texture2D', 'width': 4096}}
+    check('texture sizes the relocator did not record are named as unknown (not left out)',
+          L.texture_summary(tex, True) == 'Body 4K, outfit (size ?)'
+          and L.texture_summary({'/Game/X/T_A_D': {'class': 'Texture2D'}}, True, guessed=True) == 'Outfit',
+          L.texture_summary(tex, True))
+    check('lists of names: the first three and how many more', L.few(['a', 'b']) == 'a and b'
+          and L.few(['a', 'b', 'c', 'd', 'e']) == 'a, b, c and 2 more' and L.names_of(['/Game/X/T_A', '/Game/Y/T_B'])
+          == 'T_A and T_B', L.few(['a', 'b', 'c', 'd', 'e']))
 
 
 def make_zip(path, files):
@@ -415,6 +437,7 @@ def test_library_view():
     for stem in ('Neutral_Set_Clea_843_Clea_-_Short_P', 'Neutral_Set_Clea_843_Clea_-_Long_P'):
         for ext in ('.utoc', '.ucas'):
             touch(os.path.join(md, stem + ext))
+    label_pkg = '/Game/Chic_MyMod'
     classes = {mesh: {'class': 'SkeletalMesh', 'object': 'SK_Lune_Clea_Skin', 'override': True},
                mi: {'class': 'MaterialInstanceConstant', 'object': 'MI_Lune_Clea', 'override': True},
                body_t: {'class': 'Texture2D', 'object': 'T_Lune_Body_D', 'override': True, 'width': 4096, 'height': 4096,
@@ -422,19 +445,27 @@ def test_library_view():
                out_t: {'class': 'Texture2D', 'object': 'T_Lune_Clea_D', 'override': True, 'width': 2048, 'height': 1024,
                        'format': 'PF_BC7'},
                '/Game/Characters/Heros/Lune/PA_Lune_Clea': {'class': 'PhysicsAsset', 'object': 'PA', 'override': True}}
-    va = {'id': 'Neutral Set/Clea/843_Clea - Short', 'label': 'Clea: 843 Clea - Short', 'classes': classes,
+    classes_a = dict(classes, **{label_pkg: {'class': 'PrimaryAssetLabel', 'object': 'Chic_MyMod', 'override': False}})
+    va = {'id': 'Neutral Set/Clea/843_Clea - Short', 'label': 'Clea: 843 Clea - Short', 'classes': classes_a,
           'map': {k: '/Game/ZW' + k[8:] for k in classes},
           'output': os.path.join(md, 'Neutral_Set_Clea_843_Clea_-_Short_P.utoc')}
     vb = {'id': 'Neutral Set/Clea/843_Clea - Long', 'label': '843 Clea - Long', 'classes': {mesh: classes[mesh]},
           'map': {mesh: '/Game/ZW' + mesh[8:]}, 'output': os.path.join(md, 'Neutral_Set_Clea_843_Clea_-_Long_P.utoc')}
     other_mesh_map = {mesh: '/Game/ZQ' + mesh[8:]}
     registry = [{'name': 'Neutral Set', 'slots': [{'id': 'Neutral Set/Clea', 'label': 'Neutral Set: Clea', 'character': None,
-                                                   'variants': [vb, va]}], 'shared': ['/game/modonly/a']},
+                                                   'variants': [vb, va]}],
+                 'shared': ['/game/modonly/a', '/game/chic_mymod', '/game/modonly/t_lune_clea_extra']},
                 {'name': 'Other Set', 'slots': [{'id': 'Other Set/Main', 'label': 'Other Set: Main', 'character': 'Lune',
                                                  'variants': [{'id': 'Other Set/', 'label': 'on', 'map': other_mesh_map,
-                                                               'classes': {mesh: classes[mesh]},
+                                                               'classes': {mesh: classes[mesh], label_pkg:
+                                                                           classes_a[label_pkg]},
                                                                'output': os.path.join(out_root, 'Other_Set', 'Other_Set_P.utoc')}]}],
-                 'shared': ['/game/modonly/a']}]
+                 'shared': ['/game/modonly/a', '/game/chic_mymod', '/game/modonly/t_lune_clea_extra']},
+                {'name': 'Label Twin', 'slots': [{'id': 'Label Twin/Main', 'label': 'Label Twin: Main', 'character': 'Lune',
+                                                  'variants': [{'id': 'Label Twin/', 'label': 'on', 'map': {},
+                                                                'classes': {label_pkg: classes_a[label_pkg]},
+                                                                'output': os.path.join(out_root, 'Other_Set', 'Other_Set_P.utoc')}]}],
+                 'shared': ['/game/chic_mymod']}]
     touch(os.path.join(out_root, 'Other_Set', 'Other_Set_P.utoc'))
     paths.write_json(os.path.join(lua, 'wardrobe_registry.json'), registry)
     report = {va['id']: dict(va, notes=['has its own shaders: packed as pakchunk41234'],
@@ -450,6 +481,9 @@ def test_library_view():
     option(failed, '', ['/Game/Characters/Heros/Lune/T_X'], stem='Only_P')
     paths.write_json(os.path.join(out_root, 'Failed_Mod', 'relocate_report.json'),
                      {'Failed Mod/': {'error': 'no .utoc in this folder (legacy .pak-only mods are not supported yet)'}})
+    option(os.path.join(lib, 'Fitting Set'), '', [PLACEHOLDER], stem='Fitting_P')
+    option(os.path.join(lib, 'Feline Set'), 'Pack 1/LuneFelineBarefoot', [PLACEHOLDER])
+    option(os.path.join(lib, 'Feline Set'), 'Pack 2/LuneNoEars', [PLACEHOLDER])
     fresh = os.path.join(lib, 'Fresh Mod')
     option(fresh, 'Red', ['/Game/Characters/Heros/Maelle/T_Maelle_Hair_D'])
     option(fresh, 'Blue', ['/Game/Characters/Heros/Maelle/T_Maelle_Hair_D'])
@@ -457,10 +491,17 @@ def test_library_view():
     v = library.View(lib, paks, lua, active={'Fresh Mod'})
     mods = {m['id']: m for m in library.list_mods(v)}
     check('list: library mods plus relocated ones; folders without paks, .old backups and .incoming are not mods',
-          sorted(mods) == ['Failed Mod', 'Fresh Mod', 'Neutral Set', 'Other Set'], sorted(mods))
+          sorted(mods) == ['Failed Mod', 'Feline Set', 'Fitting Set', 'Fresh Mod', 'Label Twin', 'Neutral Set',
+                           'Other Set'], sorted(mods))
     check('  every summary has the ModSummary keys', all(set(m) == SUMMARY_KEYS for m in mods.values()),
           [set(m) ^ SUMMARY_KEYS for m in mods.values()])
     n = mods['Neutral Set']
+    check('a mod replacing the base body with one option: Replaces says "Base body", not the mod\'s name',
+          mods['Fitting Set']['replaces'] == ['Base body'], mods['Fitting Set'])
+    fel = library.mod_details(v, 'Feline Set')
+    check('  CamelCase row folders read as words; each one-option row replaces the base body',
+          [r['label'] for r in fel['rows']] == ['Lune Feline Barefoot', 'Lune No Ears'] and fel['replaces'] == ['Base body'],
+          ([r['label'] for r in fel['rows']], fel['replaces']))
     check('  states: ready, failed, working, and a relocated mod without a library folder',
           (n['state'], mods['Failed Mod']['state'], mods['Fresh Mod']['state'], mods['Other Set']['state'])
           == ('ready', 'failed', 'working', 'ready'), [m['state'] for m in mods.values()])
@@ -482,6 +523,20 @@ def test_library_view():
     check('  an unresolved link explained in plain words', s['notes'] == [
         "One texture link in MI_Lune_Clea points to a file the mod doesn't include; the menu fills it in game."], s['notes'])
     check('  its swatch', (s['swatch'] or '').startswith('data:image/png;base64,'))
+    check('  the variant id', s['id'] == 'Neutral Set/Clea/843_Clea - Short', s['id'])
+    ft = {f['path']: f for f in s['files']}
+    check('  its files by path, with what each is and whether it replaces a game file', s['files'][0] == {
+        'path': mesh, 'type': 'Outfit mesh', 'game': True} and ft[body_t]['type'] == 'Body texture'
+          and ft[out_t]['type'] == 'Texture' and ft[mi]['type'] == 'Material' and ft[label_pkg] == {
+              'path': label_pkg, 'type': 'Asset label', 'game': False} and len(s['files']) == 6, s['files'])
+    im = s['images']
+    check('  its textures for the viewer: the ones with a swatch first, with size, format and ref',
+          [i['name'] for i in im] == ['T_Lune_Clea_D', 'T_Lune_Body_D'] and all(set(i) == IMAGE_KEYS for i in im)
+          and im[0]['ref'] == 'Neutral Set/Clea/843_Clea - Short|' + out_t and im[0]['kind'] == 'Outfit'
+          and (im[0]['width'], im[0]['height'], im[0]['format']) == (2048, 1024, 'BC7') and im[1]['kind'] == 'Body'
+          and im[0]['swatch'].startswith('data:image/png') and im[1]['swatch'].startswith('data:image/png'), im)
+    check('  the package with a link to a missing file, by path', s['missing'] == [
+        {'in': mi, 'name': 'MI_Lune_Clea', 'links': 1, 'texture': True, 'names': []}], s['missing'])
     b = opts['Broken']
     check('  a refused option: ok false and why', b['ok'] is False and b['error']
           == 'Its pak was built for a different version of the game engine.' and b['swatch'] is None, b)
@@ -489,12 +544,25 @@ def test_library_view():
     check('skin: body textures, their size and the character', d['skin']['has'] and d['skin']['text']
           == "Brings its own body textures (4K) for Lune. They show only with this mod's outfits."
           and len(d['skin']['swatches']) == 1, d['skin'])
-    check('overlaps: another relocated mod replacing the same outfit of the same character', d['overlaps'] == [
-        {'mod': 'Other Set', 'text': "Both replace Lune's Clea outfit. In game, the one picked last shows."}], d['overlaps'])
+    check('  and its images for the viewer', [i['path'] for i in d['skin']['images']] == [body_t], d['skin']['images'])
+    check('overlaps: another relocated mod replacing the same outfit of the same character, with the files', d['overlaps'] == [
+        {'mod': 'Other Set', 'text': "Both replace Lune's Clea outfit. In game, the one picked last shows.",
+         'files': [mesh]}], d['overlaps'])
     texts = [x['text'] for x in d['notes']]
+    nb = {x['text'].split(' ', 2)[1]: x for x in d['notes']}
     check('notes: refused options, missing links, the same new files in two mods', any('1 of 3 options' in t for t in texts)
-          and any("1 option links to files" in t for t in texts) and any('"Other Set" has some of the same new files' in t
+          and any("1 option links to files" in t for t in texts) and any('"Other Set" has 2 of this mod\'s new files' in t
                                                                        for t in texts), texts)
+    by = lambda word: next((x for x in d['notes'] if word in x['text']), {})   # noqa: E731
+    check('  they name the options and files, with the full list in items',
+          by('1 of 3 options')['text'].endswith(': Broken.') and by('1 of 3 options')['items'] == ['Broken']
+          and by('links to files')['text'] == "1 option links to files the mod doesn't include: Short."
+          and by('links to files')['items'] == ['Short (MI_Lune_Clea: 1 link)'] and by('links to files')['what'] == 'options'
+          and by('Other Set')['items'] == ['/game/modonly/a', '/game/modonly/t_lune_clea_extra']
+          and by('Other Set')['what'] == 'files' and '(a and t_lune_clea_extra)' in by('Other Set')['text'], d['notes'])
+    check('  a shared PrimaryAssetLabel (cook metadata) is no reason to suspect two versions of one mod',
+          not any('Label Twin' in t for t in texts) and not any('chic_mymod' in i.lower() for x in d['notes']
+                                                                 for i in x.get('items', [])), texts)
     check('  the summary counts them', n['notes'] == len(d['notes']))
     f = library.mod_details(v, 'Failed Mod')
     check('a failed mod: its option says why, in plain words', f['state'] == 'failed' and f['rows'][0]['options'][0]['error']
@@ -658,9 +726,42 @@ def test_api_basics(root):
     touch(os.path.join(lua, 'Scripts', 'variants.lua'), '-- mine\nreturn { 1 }\n')
     b.install_menu()
     check('  an existing variants.lua is kept', 'return { 1 }' in open(os.path.join(lua, 'Scripts', 'variants.lua')).read())
-    shutil.rmtree(lua)
+    touch(os.path.join(lua, 'live_log_previous.txt'), '10:00:00 #1 session start 2026-10-10 10:00:00\r\n'
+          '10:00:05 #2 log: could not load /Game/Mods/Gone/T_Gone.T_Gone\r\n10:02:00 #3 key DEL\r\n')
+    f = b.monitor_file('previous')
+    check('monitor_file(previous): the session before, read once with the same rules', f.get('which') == 'previous'
+          and f['exists'] and [p['key'] for p in f['problems']] == ['load:T_Gone'] and f['problems'][0]['lines'] == [
+              '10:00:05 log: could not load /Game/Mods/Gone/T_Gone.T_Gone'] and f['since'] == '10:00:00'
+          and f['ended'] == '10:02:00' and f['date'] == '2026-10-10' and len(f['tail']) == 3 and not f['game_running']
+          and MONITOR_KEYS <= set(f), f)
+    again = b.monitor_file('previous', f['version'])
+    check('  asked again with the version it has: just "unchanged"', again == {
+        'ok': True, 'unchanged': True, 'version': f['version'], 'which': 'previous'}, again)
+    with open(os.path.join(lua, 'live_log_previous.txt'), 'ab') as fh:
+        fh.write(b'10:03:00 #4 key DEL\r\n')
+    check('  a changed file gives a new version and its lines', b.monitor_file('previous', f['version']).get('lines') == 4)
+    u = b.monitor_file('ue4ss')
+    check('monitor_file(ue4ss): UE4SS.log alone; last: none yet; unknown names refused', u['which'] == 'ue4ss'
+          and not u['exists'] and u['tail'] == [] and b.monitor_file('last')['exists'] is False
+          and b.monitor_file('other')['ok'] is False, u)
+    shutil.rmtree(lua, ignore_errors=True)   # Windows: a log file still open can't be deleted
     check('every method answers JSON-able data, never raises', json.dumps([b.get_state(), b.list_mods(), b.poll(),
                                                                            b.get_settings(), b.mod_details(None)]) and True)
+    check('bulk calls: nothing given, or only unknown mods: a reason', b.reinstall_mods([])['ok'] is False
+          and b.remove_mods(['Nope', 'Nada'], True) == {'ok': False, 'errors': [
+              {'id': 'Nope', 'error': 'There is no mod named "Nope".'}, {'id': 'Nada', 'error': 'There is no mod named "Nada".'}],
+              'error': 'None of the 2 mods could be queued: There is no mod named "Nope".'}, b.remove_mods(['Nope', 'Nada'], True))
+    check('texture_preview of an unknown mod: a reason', b.texture_preview('Nope', 'Nope/x|/Game/T', 512)['ok'] is False)
+    import re
+    from app import e33app
+    documented = set()
+    with open(os.path.join(ROOT, 'app', 'API.md'), encoding='utf-8') as f:
+        for line in f:
+            if line.startswith('| `'):
+                documented |= set(re.findall(r'`(\w+)\(', line.split('|')[1]))
+    check('the window exposes exactly the methods of API.md, and the Api has them all',
+          documented == set(e33app.METHODS) and all(callable(getattr(b, m, None)) for m in e33app.METHODS),
+          (documented ^ set(e33app.METHODS)))
 
 
 # ============================================================================ a full add job (fixtures)
@@ -768,6 +869,30 @@ def test_e2e():
     if tex_pkg:
         check('  texture size and swatch of the option with a texture', ob['textures'].startswith('Textures ')
               and (ob['swatch'] or '').startswith('data:image/png;base64,') and oa['swatch'] is None, ob)
+        img = ob['images'][0]
+        t0 = time.time()
+        pv = a.texture_preview('Test Outfits', img['ref'], 1024)
+        took = time.time() - t0
+        png_b = base64.b64decode((pv.get('url') or ',').split(',', 1)[1])
+        w_h = struct.unpack('>II', png_b[16:24]) if png_b[:4] == b'\x89PNG' else None
+        check('texture_preview: the texture itself, read from the prepared pak with retoc and decoded',
+              pv.get('ok') and pv['source'] == 'texture' and w_h == (pv['width'], pv['height'])
+              and (pv['tex_width'], pv['tex_height'], pv['format']) == (img['width'], img['height'], img['format'])
+              and pv['name'] == img['name'] and pv['path'] == tex_pkg, {k: v for k, v in pv.items() if k != 'url'})
+        print(f'      (preview took {took:.2f} s)')
+        t0 = time.time()
+        again = a.texture_preview('Test Outfits', img['ref'], 1024)
+        check('  the second time it comes from the cache', again.get('url') == pv.get('url') and time.time() - t0 < 1.0)
+        sm = a.texture_preview('Test Outfits', img['ref'], 128)
+        check('  a smaller one says it is smaller than the texture', sm.get('ok') and max(sm['width'], sm['height']) <= 128
+              and 'Shown at' in sm['note'], {k: v for k, v in sm.items() if k != 'url'})
+        content = os.path.dirname(paks)
+        check('  no work folder is left next to Paks', not [n for n in os.listdir(content) if n.startswith('_e33wardrobe_work_')],
+              os.listdir(content))
+        check('  refs of another mod, or of files that are not its textures, are refused',
+              a.texture_preview('Test Outfits', 'Other/x|' + tex_pkg)['ok'] is False
+              and a.texture_preview('Test Outfits', img['ref'].split('|')[0] + '|/Game/../../etc/passwd')['ok'] is False
+              and a.texture_preview('Test Outfits', img['ref'].split('|')[0] + '|/Game/Materials/MI_BlueCube')['ok'] is False)
     reg = json.load(open(os.path.join(paths.menu_dir(game), 'wardrobe_registry.json')))
     check('the wardrobe has it; the menu was installed with it', [m['name'] for m in reg] == ['Test Outfits']
           and a.get_state()['menu']['installed'])
@@ -785,7 +910,9 @@ def test_e2e():
     # a pak-only mod is refused with a reason; the queue goes on
     pak_only = make_zip(os.path.join(e2e, 'downloads', 'Old Style.zip'), {'Old Style/Old_P.pak': b'PAK'})
     r1 = a.add_paths([pak_only])
-    r2 = a.reinstall_mod('Test Outfits')
+    r2 = a.reinstall_mods(['Test Outfits', 'Nope'])
+    check('reinstall_mods: one job per known mod, the others listed with why', r2['ok'] and len(r2['jobs']) == 1
+          and r2['errors'] == [{'id': 'Nope', 'error': 'The folder of "Nope" is missing from the library.'}], r2)
     a._jobs.wait(600)
     js = {j['id']: j for j in a.poll()['jobs']}
     check('a .pak-only mod: refused with a reason, not put in the library', js[r1['jobs'][0]]['status'] == 'failed'
@@ -793,15 +920,51 @@ def test_e2e():
           js[r1['jobs'][0]])
     check('reinstall after it: done', js[r2['jobs'][0]]['status'] == 'done' and js[r2['jobs'][0]]['kind'] == 'reinstall'
           and [s['key'] for s in js[r2['jobs'][0]]['steps']] == ['install'], js[r2['jobs'][0]])
-    r = a.remove_mod('Test Outfits', True)
+    r = a.remove_mods(['Test Outfits'], True)
     a._jobs.wait(600)
     job = a.poll()['jobs'][-1]
     reg = json.load(open(os.path.join(paths.menu_dir(game), 'wardrobe_registry.json')))
-    check('remove_mod with delete_files: out of the menu, paks and folder gone', r['ok'] and job['status'] == 'done'
+    check('remove_mods with delete_files: out of the menu, paks and folder gone', r['ok'] and job['status'] == 'done'
           and [s['state'] for s in job['steps']] == ['done', 'done'] and reg == []
           and not os.path.exists(os.path.join(lib, 'Test Outfits'))
           and not os.path.exists(os.path.join(paks, '~mods', '_E33Wardrobe', 'Test_Outfits')) and a.list_mods() == [], job)
     check('nothing left in the library\'s incoming folder', not os.listdir(os.path.join(lib, '.incoming')))
+
+    # names of files that links point to: kept in the zen package, read with retoc get
+    from app.backend import assets
+    zmod = os.path.join(e2e, 'zen', 'Zen Mod')
+    leg = os.path.join(e2e, 'zen_leg')
+    legacy_copy(leg, ['/Game/Materials/MI_BlueCube'])
+    os.makedirs(os.path.join(zmod, 'Opt'))
+    rc, o = run([retoc, 'to-zen', '--version', 'UE5_4', leg, os.path.join(zmod, 'Opt', 'Opt_P.utoc')])
+    info = paths.tools()['utoc'].read_utoc(os.path.join(zmod, 'Opt', 'Opt_P.utoc'))
+    chunk = info['chunks'][info['files'].index('Sandfall/Content/Materials/MI_BlueCube.uasset')]
+    rc2, o2 = run([retoc, 'get', os.path.join(zmod, 'Opt', 'Opt_P.utoc'), chunk, os.path.join(e2e, 'mi.bin')])
+    names = None
+    if rc2 == 0:
+        with open(os.path.join(e2e, 'mi.bin'), 'rb') as f:
+            names = assets.zen_imported_packages(f.read())
+    check('a zen package lists the packages it imports by name (read from the .utoc chunk with retoc get)',
+          rc == 0 and names == ['/Game/Materials/M_Cube'], (o[-300:], o2[-300:], names))
+    other_paks = os.path.join(e2e, 'OtherGame', 'Sandfall', 'Content', 'Paks')
+    touch(os.path.join(other_paks, 'pakchunk0-Windows.utoc'), tiny_utoc(['Sandfall/Content/Other/T_Other.uasset']))
+    touch(os.path.join(other_paks, 'pakchunk0-Windows.ucas'), b'UCAS')
+    empty_paks = os.path.join(e2e, 'NoGame', 'Sandfall', 'Content', 'Paks')
+    os.makedirs(empty_paks)
+
+    class V:
+        pass
+    v = V()
+    v.paks = other_paks
+    got = assets.missing_names(v, zmod, os.path.join(zmod, 'Opt'), {'/Game/Materials/MI_BlueCube': 1})
+    check('  an import that neither the game nor the mod has is named', got == {
+        '/Game/Materials/MI_BlueCube': ['/Game/Materials/M_Cube']}, got)
+    v.paks = empty_paks
+    got = assets.missing_names(v, zmod, os.path.join(zmod, 'Opt'), {'/Game/Materials/MI_BlueCube': 1})
+    check('  without the game\'s file list nothing is named (it would all look missing)', got == {}, got)
+    v.paks = paks
+    got = assets.missing_names(v, zmod, os.path.join(zmod, 'Opt'), {'/Game/Materials/MI_BlueCube': 1})
+    check('  one the game has is not', got == {}, got)
 
 
 def main():

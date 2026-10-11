@@ -26,7 +26,8 @@ def _fstring(buf, pos):
 
 
 def read_utoc(path):
-    """Return dict(mount_point, files=[relative paths], flags, version, container_id)."""
+    """Return dict(mount_point, files=[relative paths], chunks=[chunk id (hex) of each file], flags,
+    version, container_id)."""
     with open(path, 'rb') as f:
         buf = f.read()
     if buf[:16] != TOC_MAGIC:
@@ -39,6 +40,7 @@ def read_utoc(path):
     seeds_count = struct.unpack_from('<I', buf, 84)[0]
     no_hash_count = struct.unpack_from('<I', buf, 96)[0]
     pos = hdr_size
+    chunk_ids = buf[pos:pos + entry_count * 12]
     pos += entry_count * 12          # chunk ids
     pos += entry_count * 10          # offset/lengths
     if version >= 4:                 # PerfectHash
@@ -51,7 +53,7 @@ def read_utoc(path):
         hash_size = struct.unpack_from('<i', buf, pos)[0]
         pos += 4 + 2 * hash_size + block_count * 20
     out = {'path': path, 'version': version, 'flags': flags, 'container_id': container_id,
-           'mount_point': '', 'files': [], 'encrypted': bool(flags & FLAG_ENCRYPTED)}
+           'mount_point': '', 'files': [], 'chunks': [], 'encrypted': bool(flags & FLAG_ENCRYPTED)}
     if not (flags & FLAG_INDEXED) or dir_index_size == 0 or out['encrypted']:
         return out
     d = buf[pos:pos + dir_index_size]
@@ -80,9 +82,10 @@ def read_utoc(path):
         fi = first_file
         while fi != NONE and fi < len(files) and fi not in seen_files:
             seen_files.add(fi)
-            fname, nxt, _user = files[fi]
+            fname, nxt, user = files[fi]
             if fname < len(strings):
                 out['files'].append(here + strings[fname])
+                out['chunks'].append(chunk_ids[user * 12:user * 12 + 12].hex() if user < entry_count else '')
             fi = nxt
         c = first_child
         while c != NONE and c < len(dirs) and c not in seen_dirs:

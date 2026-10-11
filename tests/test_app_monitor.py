@@ -155,6 +155,9 @@ try:
     p = keys(m)['load:Lune_Skirt_N']
     check('repeat counted, first/last kept, late copy from the other log not counted',
           p['count'] == 2 and p['first'] == hms(20) and p['last'] == hms(40), p)
+    check('  the problem keeps the log lines that raised it, as the tail shows them (not the UE4SS copies)',
+          p['lines'] == [f'{hms(20)} log: {miss}', f'{hms(40)} log: {miss}'], p['lines'])
+    check('  every problem has its lines', all(isinstance(x.get('lines'), list) for x in m.snapshot()['problems']))
 
     # ------------------------------------------------------------------ watchdog
     g.live(60, '  change BP_CharacterSkinBase_Lune_C_1 [Lune].Body: mesh /Game/A/SK_A -> /Game/B/SK_B')
@@ -168,6 +171,8 @@ try:
           p and p['level'] == 'warn' and p['count'] == 1 and p['title'] == 'The game stopped responding for 36 s', p)
     check('  detail names the state and the last step',
           p and 'apply pass (after map load)' in p['detail'] and 'SK_Lune_Clea' in p['detail'], p and p['detail'])
+    check('  its lines: the three WATCHDOG lines of that stall', p and len(p['lines']) == 3
+          and all('WATCHDOG' in x for x in p['lines']) and p['lines'][0].startswith(hms(66)), p and p['lines'])
     g.live(100, f'WATCHDOG: the game thread has not run for 7 s; mod state: idle (since {hms(93)})')
     m.poll_once()
     p = keys(m).get('watchdog-idle')
@@ -198,7 +203,14 @@ try:
           len(lua) == 2 and all(p['level'] == 'error' for p in lua), [p['detail'] for p in lua])
     check('  user name in paths replaced by <user>', any('<user>' in p['detail'] for p in lua)
           and not any('Ann' in p['detail'] for p in lua), [p['detail'] for p in lua])
+    check('  also in the log lines kept with them (they get copied into bug reports)',
+          any('<user>' in ln for p in lua for ln in p['lines']) and not any('Ann' in ln for p in lua for ln in p['lines']),
+          [p['lines'] for p in lua])
     check('  the traceback one carries the error text', any('bad argument' in p['detail'] for p in lua))
+    tb = next((p for p in lua if 'bad argument' in p['detail']), None)
+    check('  its lines: the error line and the stack frame naming the menu, marked [UE4SS]',
+          tb and len(tb['lines']) == 2 and all(' [UE4SS] ' in x for x in tb['lines']) and 'bad argument' in tb['lines'][0]
+          and 'menu.lua:88' in tb['lines'][1], tb and tb['lines'])
 
     # ------------------------------------------------------------------ the menu's own messages
     err = "apply failed on BP_CharacterSkinBase_Lune_C_2147: main.lua:900: attempt to index a nil value (field '?')"
@@ -261,6 +273,34 @@ try:
     p = keys(m).get('empty-texture:Lune:Normal_MAIN:Lune_Body_N')
     check('  the pick of that pass is named', p and 'Seen after picking Lune Outfit Options: Variants = 843 Clea: '
                                                     'Shorter Skirt' in p['detail'], p and p['detail'])
+    fill = ("  change BP_CharacterSkinBase_Sciel_C_5 [Sciel].Body: mat1 empty (the mod's mesh has no material for slot "
+            "body) -> /Game/Characters/Heros/Sciel/Body/MI_Body_Sciel (the body's material for slot body)")
+    g.live(152, fill)
+    g.live(152, fill.replace('CharacterSkinBase_Sciel_C_5', 'GameMenu_Sciel_C_6'))
+    g.live(152, "  change BP_CharacterSkinBase_Sciel_C_5 [Sciel].Body: mat2 empty (the mod's mesh has no material for "
+                "slot extra) -> /Game/Characters/Heros/Sciel/Body/MI_Sciel_Skin (the body's skin material)")
+    g.live(152, "  change BP_CharacterSkinBase_Sciel_C_5 [Sciel].Body: mat1 texture Color_MAIN: /Game/A/T_Old -> "
+                "/Game/B/T_New (the mod's own, named like it)")
+    g.live(152, "  change BP_CharacterSkinBase_Sciel_C_5 [Sciel].Body: mat3 empty (the mod's mesh has no material for "
+                "slot ?) and nothing to fill it with")
+    g.live(152, 'pass (Altered Flower Suit: Main = on): 4 change(s)')
+    m.poll_once()
+    k = keys(m)
+    p = k.get('empty-material:Sciel:body:MI_Body_Sciel')
+    check("empty material slot filled with the body's material -> info naming the slot and the material",
+          p and p['level'] == 'info' and p['title'] == "Filled an empty material slot on Sciel's outfit"
+          and 'slot body' in p['detail'] and 'MI_Body_Sciel' in p['detail'] and "the body's material for slot body"
+          in p['detail'] and "isn't grey" in p['hint'] and 'report.txt' in p['hint'], p)
+    check('  the same fill on two actors in one pass counts once, both lines kept', p and p['count'] == 1
+          and len(p['lines']) == 2, p)
+    p = k.get('empty-material:Sciel:extra:MI_Sciel_Skin')
+    check("  the skin material for a slot the body doesn't have -> info too", p and p['level'] == 'info'
+          and "the body's skin material" in p['detail'] and 'slot extra' in p['detail'], p)
+    p = k.get('grey-slot:Sciel:?')
+    check("  nothing to fill it with -> warn: that part shows grey", p and p['level'] == 'warn'
+          and p['title'] == "An outfit part shows grey: the mod's mesh has no material for slot ?", p)
+    check('  a texture swapped for one named like it is not a problem',
+          not any(any('T_New' in ln for ln in x['lines']) for x in k.values()), list(k))
     g.live(160, 'pass (after map load): 0 change(s) - nothing loaded needed changing')
     g.live(160, 'map loaded: Level_Camp_Main')
     m.poll_once()
@@ -284,6 +324,8 @@ try:
     check('problems_text: blocks with level, time, title, detail, count, hint',
           "[ERROR] " in txt and "UE4SS reported 'Ref was not function'" in txt and 'What to do: ' in txt
           and f'{hms(20)} to {hms(40)}, 2 times' in txt and 'threading' in txt, txt[:600])
+    check('problems_text: up to 3 log lines per problem, user names hidden', '  Log: ' in txt
+          and f'  Log: {hms(40)} log: {miss}' in txt and 'Ann' not in txt, txt[:900])
     check('problems_text: header and the on-screen line', txt.startswith('E33 Wardrobe: game log problems')
           and 'in-game menu: started (1.1.0)' in txt and 'UE4SS v3.0.1 Beta #0 - Git SHA #527a483b' in txt
           and 'On screen: nothing reported yet.' in txt, txt[:300])
@@ -377,18 +419,21 @@ try:
     lines += [f'{hms(2)} #{i} {filler}' for i in range(3, 6003)]
     lines += [f'{hms(3)} #6003 log: could not load /Game/New/Late_Asset.Late_Asset']
     g2.raw(g2.live_path, '\r\n'.join(lines) + '\r\n', 'wb')
-    check('(the big log is over 256 KB)', os.path.getsize(g2.live_path) > 2 * mon.INITIAL_TAIL)
+    check('(the big log is over 512 KB)', os.path.getsize(g2.live_path) > 512 * 1024)
+    check('the first look at a log (app start) reads a normal session whole: 2 MB or more', mon.FIRST_LOOK >= 2 << 20)
     g2.new_ue(-5)
-    m2 = mon.Monitor(g2.paths, process_check=None, crash_dir=None)
+    m2 = mon.Monitor(g2.paths, process_check=None, crash_dir=None, first_look=256 * 1024)
     m2.poll_once()
     s, k = m2.snapshot(), keys(m2)
-    check('first look reads the end only: late line seen, early line not',
+    check('first look (256 KB here) reads the end only: late line seen, early line not',
           'load:Late_Asset' in k and 'load:Early_Asset' not in k, list(k))
     check('  since comes from the session line at the top of the file', s['since'] == hms(0), s['since'])
-    check('  tail holds the last 200 lines', len(s['tail']) == 200 and 'Late_Asset' in s['tail'][-1], len(s['tail']))
+    check(f'  tail holds the last {mon.TAIL_LINES} lines', len(s['tail']) == mon.TAIL_LINES
+          and 'Late_Asset' in s['tail'][-1], len(s['tail']))
     check('  a first look is not growth: game not running', s['game_running'] is False)
     proc2 = {'v': True}
-    m5 = mon.Monitor(g2.paths, process_check=lambda: proc2['v'], crash_dir=None, process_interval=0)
+    m5 = mon.Monitor(g2.paths, process_check=lambda: proc2['v'], crash_dir=None, process_interval=0,
+                     first_look=256 * 1024)
     m5.poll_once()
     proc2['v'] = False
     m5.poll_once()
@@ -403,6 +448,58 @@ try:
     m2.poll_once()
     check('a rewritten UE4SS.log that is longer than before is still noticed', 'ref-not-function' in keys(m2),
           list(keys(m2)))
+
+    # ------------------------------------------------------------------ analyse(): logs of a game that has ended
+    g3 = Game(os.path.join(tmp, 'game3'))
+    g3.new_ue(0)
+    g3.new_live_session(8)
+    g3.live(10, 'log: ' + ready)
+    g3.ue(10.4, '[Lua] [E33Wardrobe] ' + ready)
+    g3.live(20, 'log: could not load /Game/Mods/Old/Old_Asset.Old_Asset')
+    g3.live(21, 'pass (Lune Outfit Options: Variants = 843 Clea: Shorter Skirt): 2 change(s)')
+    g3.live(21, '  on screen: Lune Outfit Options: Variants = 843 Clea: Shorter Skirt: 2/2 asset(s)')
+    g3.new_live_session(100)                         # the next game start: the first one is now the previous
+    g3.live(130, 'log: could not load /Game/Mods/New/New_Asset.New_Asset')
+    g3.ue(140, 'Ref was not function')
+    prev = os.path.join(g3.menu, 'live_log_previous.txt')
+    a = mon.analyse(live=prev)
+    ak = {p['key']: p for p in a['problems']}
+    check('analyse(previous): its problems, with lines, through the same rules',
+          list(ak) == ['load:Old_Asset'] and ak['load:Old_Asset']['lines'] == [
+              f'{hms(20)} log: could not load /Game/Mods/Old/Old_Asset.Old_Asset'], a['problems'])
+    check('  since, ended and date of that session; on screen as it was; not running, not watching',
+          a['since'] == hms(8) and a['ended'] == hms(21) and a['date'] == at(21).strftime('%Y-%m-%d')
+          and a['on_screen'][0]['variant'] == '843 Clea: Shorter Skirt' and a['menu_active']
+          and not a['game_running'] and not a['watching'], a)
+    check('  its tail is the whole file; lines counted', len(a['tail']) == 5 and a['lines'] == 5
+          and a['tail'][0].startswith(f'{hms(8)} session start'), a['tail'])
+    a = mon.analyse(live=g3.live_path, ue=g3.ue_path)
+    ak = {p['key']: p for p in a['problems']}
+    check('analyse(last session): live_log.txt and UE4SS.log together',
+          'load:New_Asset' in ak and 'ref-not-function' in ak and 'load:Old_Asset' not in ak
+          and ak['ref-not-function']['lines'] == [f'{hms(140)} [UE4SS] Ref was not function'], list(ak))
+    a = mon.analyse(ue=g3.ue_path)
+    check('analyse(UE4SS.log only): its lines in ue_tail, "HH:MM:SS text"', len(a['ue_tail']) == 11
+          and f'{hms(0)} Console created' in a['ue_tail'] and a['ue_tail'][-1] == f'{hms(140)} Ref was not function'
+          and a['tail'] == [] and a['ended'] == hms(140)
+          and a['ue4ss_version'] == 'v3.0.1 Beta #0 - Git SHA #527a483b', a['ue_tail'])
+    g4 = Game(os.path.join(tmp, 'game4'))
+    g4.new_ue(0, menu=False, lua=5)
+    g4.ue(80, '[Lua] [Keybinds] tick')
+    os.makedirs(os.path.join(g4.menu, 'Scripts'))
+    with open(os.path.join(g4.menu, 'Scripts', 'main.lua'), 'w', encoding='utf-8') as fh:
+        fh.write('-- menu')
+    a = mon.analyse(ue=g4.ue_path, menu_dir=g4.menu)
+    p = {x['key']: x for x in a['problems']}.get('menu-not-started')
+    check('analyse(UE4SS.log) with the menu folder: the hint looks at the installed menu (here: no enabled.txt)',
+          p and 'enabled.txt' in p['hint'], p)
+    with open(os.path.join(g3.menu, 'binary.txt'), 'wb') as fh:
+        fh.write(b'\x00\x01' * 600000 + b'\n')
+    a = mon.analyse(live=os.path.join(g3.menu, 'binary.txt'))
+    check('analyse() of a binary file: lines are cut, the answer stays small', max(map(len, a['tail'] or [''])) <= 1000, len(str(a)))
+    a = mon.analyse(live=os.path.join(g3.menu, 'nope.txt'))
+    check('analyse() of a missing file: empty, no error', a['problems'] == [] and a['tail'] == [] and a['lines'] == 0
+          and a['ended'] is None, a)
 
     # ------------------------------------------------------------------ speed
     t = time.perf_counter()

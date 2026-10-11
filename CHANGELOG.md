@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.2.1
+
+App:
+- Mod list: tick boxes (and Ctrl+click, Shift+click) for **Reinstall selected** and **Remove
+  selected** with one dialog; **Reinstall all**; a filter box.
+- Every list: drag a column header's edge to resize, double-click to fit; widths are remembered.
+- Mod details name things: notes list the options and files they mean (expandable), overlaps list
+  the shared files, each option lists its textures (size, format) and files. Links to files the mod
+  doesn't include name the missing file when the mod's paks still say it.
+- "Two versions of one mod?" no longer counts PrimaryAssetLabels (cook metadata that does nothing in
+  game), which two mods by one author often share.
+- Replaces says "Base body" instead of the mod's name; CamelCase folder names read as words.
+- Options without a swatch show no empty square. Texture sizes that weren't recorded say
+  "(size ?)"; Reinstall records them.
+- Image viewer for swatches and skin textures: a bigger picture read from the prepared mod, zoom,
+  pan, previous / next.
+- Copy: details text can be selected; right-click menus with Copy, Copy option text, Copy file paths,
+  Copy all details; Ctrl+C.
+- Game log: click a problem or an on-screen row to see only its log lines. When the game is closed
+  it shows the last session; Show: This session / Previous session / UE4SS.log. Copy problems
+  includes each problem's log lines.
+- Game log: explains the menu's new lines about empty material slots of a worn mod mesh (filled with
+  the body's material, or left grey).
+
+In-game menu:
+- Fixed grey bodies from outfit mods whose mesh leaves a material slot empty for the game to fill
+  (Cheeki's Sciel). When such a mesh is worn, an empty slot gets the body's own material (same slot
+  name, else the skin material), with the mod's textures named like the body's ones
+  ("body_high_BaseColor-nude") on it. live_log.txt says what filled each slot.
+
+Relocator:
+- Texture sizes come from the texture header when the full read fails (colour-only options showed
+  no sizes), and the reason is recorded.
+- The "Two versions of one mod?" warning skips PrimaryAssetLabels.
+
 ## 1.2.0
 
 - **App** (`E33 Wardrobe.exe`, on GitHub Releases): finds the game (or asks for the folder),

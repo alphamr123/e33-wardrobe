@@ -22,7 +22,7 @@ Nothing is queued to the game thread from another thread (see "threading" below)
 ]]
 
 local MOD = "E33Wardrobe"
-local VERSION = "1.2.0"                         -- the same as tools/e33common.py VERSION
+local VERSION = "1.2.1"                         -- the same as tools/e33common.py VERSION
 local KEYS = {
     menu = { "DEL", {} },
     menuUp = { "UP_ARROW", { "CONTROL" } }, menuDown = { "DOWN_ARROW", { "CONTROL" } },
@@ -987,10 +987,10 @@ local function namedLike(active, before)
     end
     return best and loadObj(best.pkg, best.obj) or nil
 end
--- An unused texture of the picked variants that fits the parameter by name (PC: Sciel's Cheeki
--- body uses Lune's material, whose Color_MAIN is empty; the mod ships body_high_BaseColor-nude for
--- it, which nothing uses). Words of the parameter must be in the texture name; "body" counts in
--- favour, words the parameter doesn't have (underwear, bikini) against.
+-- An unused texture of the picked variants that fits the parameter by name, for an empty link whose
+-- old texture has no namesake in the mod. Words of the parameter must be in the texture name;
+-- "body" counts in favour, words the parameter doesn't have (underwear, bikini) against. (Sciel's
+-- grey Cheeki body turned out to be empty material slots, not this: see Wear.fillSlots.)
 local KIND_WORDS = { color = "color", colour = "color", albedo = "color", diffuse = "color", normal = "normal",
                      roughness = "roughness", orm = "roughness", cavity = "cavity", emissive = "emissive",
                      glow = "emissive", underwear = "underwear", btls = "btls" }
@@ -1035,6 +1035,82 @@ Wear.fillEmpty = function(actor, comp, char, n, active)
                         i, name, pkgPath(tex) or "?", own and " (the mod's own texture for it)" or " (what the body showed before)")
                 end
                 ::continue::
+            end
+        end
+    end
+end
+
+-- Empty material slots. Some mods' meshes leave a slot without a material and count on the game's
+-- skin Blueprint to fill it (PC report 2026-10-11: Cheeki's Sciel mesh, mat1 and mat2 nil, so the
+-- body showed grey). Wear clears the old outfit's materials, so nothing fills them. An empty slot
+-- gets the material the body showed before (the game's own, with the character's skin settings):
+-- the one in the slot of the same name, else the skin material. On it, the mod's textures named
+-- like the ones it shows ("body_high_BaseColor" -> "body_high_BaseColor-nude") replace them.
+Wear.slotNames = function(mesh)                 -- slot -> lower-case slot name of a mesh asset
+    local out = {}
+    pcall(function()
+        for i, sm in ipairs(arrayItems(mesh.Materials)) do
+            local ok, s = pcall(function() return sm.MaterialSlotName:ToString() end)
+            if ok and type(s) == "string" and s ~= "" and s ~= "None" then out[i - 1] = s:lower() end
+        end
+    end)
+    return out
+end
+Wear.isSkin = function(m, name)
+    if name and (name:find("body", 1, true) or name:find("skin", 1, true)) then return true end
+    for key in pairs(textureParams(m)) do
+        if key:match("^[^|]*") == "Color_MAIN" then return true end      -- the MetaHuman body material
+    end
+    local base = isMID(m) and m.Parent or m
+    return ((pkgPath(base) or ""):lower():match("/mi_body[^/]*$")) ~= nil
+end
+Wear.before = function(comp, mesh, prev)         -- what the body shows before its mesh changes
+    local b = { byName = {}, skin = nil }
+    local function add(m, nm)
+        if not (valid(m) and isA(m, "/Script/Engine.MaterialInterface")) then return end
+        if nm and not b.byName[nm] then b.byName[nm] = m end
+        if not b.skin and Wear.isSkin(m, nm) then b.skin = m end
+    end
+    if prev and prev.mats then                  -- under a worn mesh: the outfit the game put there
+        for i, m in pairs(prev.mats) do add(m, prev.names and prev.names[i]) end
+    end
+    local names = mesh and Wear.slotNames(mesh) or {}
+    local ok, n = pcall(function() return comp:GetNumMaterials() end)
+    for i = 0, (ok and n or 0) - 1 do
+        local okm, m = pcall(function() return comp:GetMaterial(i) end)
+        if okm then add(m, names[i]) end
+    end
+    return b
+end
+Wear.fillSlots = function(actor, comp, mesh, before, active)
+    local names = Wear.slotNames(mesh)
+    local ok, n = pcall(function() return comp:GetNumMaterials() end)
+    for i = 0, (ok and n or 0) - 1 do
+        local okm, m = pcall(function() return comp:GetMaterial(i) end)
+        if okm and not valid(m) then
+            local nm = names[i]
+            local donor, how = nm and before.byName[nm], "the body's material for slot " .. tostring(nm)
+            if not donor then donor, how = before.skin, "the body's skin material" end
+            if donor and valid(donor) then
+                local parent = isMID(donor) and donor.Parent or donor
+                local mid = makeMID(actor, comp, i, parent, nil)
+                if mid and isMID(donor) then pcall(copyParams, donor, mid) end
+                if not mid then pcall(function() comp:SetMaterial(i, donor) end) end
+                change("mat%d empty (the mod's mesh has no material for slot %s) -> %s (%s)",
+                    i, nm or "?", pkgPath(parent) or "?", how)
+                if mid then
+                    for key, tp in pairs(textureParams(mid)) do
+                        local t = valid(tp.tex) and namedLike(active, tp.tex)
+                        if t then
+                            setTexture(mid, tp.info, t)
+                            change("mat%d texture %s: %s -> %s (the mod's own, named like it)",
+                                i, key:match("^[^|]*"), pkgPath(tp.tex) or "?", pkgPath(t) or "?")
+                        end
+                    end
+                end
+            else
+                change("mat%d empty (the mod's mesh has no material for slot %s) and nothing to fill it with",
+                    i, nm or "?")
             end
         end
     end
@@ -1308,7 +1384,7 @@ local function applyToActor(actor, doneComps)
                             local okm, m = pcall(function() return comp:GetMaterial(i) end)
                             if okm and valid(m) then mats[i] = m end
                         end
-                        FORCED_FROM[ca] = { path = mp, obj = leafName(mesh), mats = mats }
+                        FORCED_FROM[ca] = { path = mp, obj = leafName(mesh), mats = mats, names = Wear.slotNames(mesh) }
                         why = "Wear: over the outfit worn now"
                     end
                     FORCED_FROM[ca].set = force.pkg
@@ -1358,6 +1434,8 @@ local function applyToActor(actor, doneComps)
         if newMesh and kind and char and kind == "skel" and WEAR_COMPS[e.name] then
             pcall(Wear.noteTextures, comp, char)        -- what the body shows before its mesh changes
         end
+        local before = newMesh and kind == "skel" and WEAR_COMPS[e.name]
+            and select(2, pcall(Wear.before, comp, mesh, FORCED_FROM[comp:GetAddress()])) or nil
         if newMesh and kind then
             change("mesh %s -> %s (%s)", mesh and pkgPath(mesh) or "none", pkgPath(newMesh) or "?", why or "?")
             oldDefaults = mesh and meshDefaults(mesh) or {}
@@ -1390,6 +1468,7 @@ local function applyToActor(actor, doneComps)
         local compActive = active
         if WEAR_COMPS[e.name] and kind == "skel" then compActive = forOutfit(active, mesh and pkgPath(mesh)) end
         if kind == "skel" then remapAnimClass(compActive, comp) end
+        if meshChanged and type(before) == "table" then pcall(Wear.fillSlots, actor, comp, mesh, before, compActive) end
         local ok, n = pcall(function() return comp:GetNumMaterials() end)
         if ok and n then
             for i = 0, n - 1 do

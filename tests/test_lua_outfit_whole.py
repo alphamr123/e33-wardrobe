@@ -68,6 +68,15 @@ asset("Texture2D", "/Game/Characters/ZWGREY2/Body/body_high_BaseColor-mod", "bod
 asset("Texture2D", "/Game/Characters/ZWGREY2/Body/underwear_color-mod", "underwear_color-mod")
 asset("SkeletalMesh", "/Game/Characters/ZWGREY/Body/SK_Lune_Bikini_B_Skin", "SK_Lune_Bikini_B_Skin",
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY/Body/MI_Body_Mod.MI_Body_Mod") } }) })
+-- a mod mesh with empty material slots, left for the game's skin Blueprint to fill (PC report
+-- 2026-10-11: Cheeki's Sciel mesh, mat1 and mat2 nil, grey body). Chic's slot is named "Body".
+get("/Game/Characters/Lune/Chic/SK_Lune_Chic.SK_Lune_Chic")._p.Materials._items[1].MaterialSlotName = FName("Body")
+asset("MaterialInstanceConstant", "/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod", "MI_Bikini_Mod", { TextureParameterValues = TArray({}) })
+asset("SkeletalMesh", "/Game/Characters/ZWGREY3/Body/SK_Lune_Bikini_D_Skin", "SK_Lune_Bikini_D_Skin",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod.MI_Bikini_Mod"), MaterialSlotName = FName("Bikini") },
+                         { MaterialSlotName = FName("Body") },
+                         { MaterialSlotName = FName("Extra") } }) })
+asset("Texture2D", "/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude", "T_Chic_D-nude")
 '''
 
 VARIANTS = r'''return {
@@ -101,6 +110,12 @@ VARIANTS = r'''return {
         ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_C_Skin"] = { "/Game/Characters/ZWGREY2/Body/SK_Lune_Bikini_C_Skin", "SK_Lune_Bikini_C_Skin", "SkeletalMesh" },
         ["/Game/Characters/Lune/Body/underwear_color-mod"] = { "/Game/Characters/ZWGREY2/Body/underwear_color-mod", "underwear_color-mod", "Texture2D" },
         ["/Game/Characters/Lune/Body/body_high_BaseColor-mod"] = { "/Game/Characters/ZWGREY2/Body/body_high_BaseColor-mod", "body_high_BaseColor-mod", "Texture2D" } } } } } } },
+  { mod = "Grey3", slots = {
+    { id = "G3/main", label = "Grey3: Lune outfit", character = "Lune", variants = {
+      { id = "G3/a", label = "A", map = {
+        ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_D_Skin"] = { "/Game/Characters/ZWGREY3/Body/SK_Lune_Bikini_D_Skin", "SK_Lune_Bikini_D_Skin", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Bikini/MI_Bikini_Mod"] = { "/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod", "MI_Bikini_Mod", "MaterialInstanceConstant" },
+        ["/Game/Characters/Lune/Chic/T_Chic_D-nude"] = { "/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude", "T_Chic_D-nude", "Texture2D" } } } } } } },
   -- one costume for two characters (PC: "Altered Flower Suit Costume", Lune + Maelle + Sciel):
   -- the slot is tied to nobody; each mesh's path says whose it is
   { mod = "Costume", slots = {
@@ -319,6 +334,36 @@ def main():
     check('  a texture of the mod named for the kind of parameter (BaseColor -> body_high_BaseColor), not underwear',
           mesh().startswith('/Game/Characters/ZWGREY2/') and tex() == '/Game/Characters/ZWGREY2/Body/body_high_BaseColor-mod.body_high_BaseColor-mod',
           (mesh(), tex()))
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
+
+    # ---- a mod mesh with empty material slots (PC report 2026-10-11: Cheeki's Sciel, grey body)
+    tmp, mod, L, G, W, mesh, tex = run('')
+    gi = [x.id for x in W.slots().values()].index('G3/main') + 1
+    W.setVariant(gi, 1)                                          # Lune wears Chic: Auto Wear puts it on
+    G.settle()
+    G.tickGT(40)
+    slot = L.eval('''function(b, i)
+        local m = b:GetMaterial(i)
+        if not m then return "nil" end
+        local base = (m._p.Parent and m._p.Parent._path) or m._path
+        local tex
+        local ok, arr = pcall(function() return m.TextureParameterValues end)
+        if ok and arr then arr:ForEach(function(_, e) tex = e:get().ParameterValue._path end) end
+        return base .. " | " .. tostring(tex) end''')
+    body = L.eval('function() return ACTORS[1].Body end')()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    s0, s1, s2 = slot(body, 0), slot(body, 1), slot(body, 2)
+    check('an empty slot of a worn mod mesh gets the body\'s material from the slot of the same name, not grey',
+          mesh().startswith('/Game/Characters/ZWGREY3/') and s1.startswith('/Game/Characters/Lune/Chic/MI_Chic'), (mesh(), s1))
+    check('  with the mod\'s own texture named like the one it showed (T_Chic_D -> T_Chic_D-nude)',
+          s1.endswith('/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude.T_Chic_D-nude'), s1)
+    check('  a slot with no match gets the skin material; the mod\'s own material stays',
+          s2.startswith('/Game/Characters/Lune/Chic/MI_Chic') and s0.startswith('/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod'), (s0, s2))
+    check('  the live log says what filled each slot', "mat1 empty (the mod's mesh has no material for slot body)" in live
+          and "(the body's skin material)" in live, [x for x in live.splitlines() if 'empty' in x][:3])
+    W.setWear('G3/main', False)
+    G.settle()
+    check('  Wear off: Chic with its own texture again', mesh() == CHIC and tex() == TEX_VANILLA, (mesh(), tex()))
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
     # an old pick saved under the unsplit slot is carried over too

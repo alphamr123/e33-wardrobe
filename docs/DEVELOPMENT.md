@@ -101,7 +101,7 @@ crowded rows, cut text and highlights, not for exact pixels.
   - `test_lua_mock.py`, `test_lua_switching.py`: swapping, reverting, spawns, the dump.
   - `test_lua_coverage.py`: pawns that aren't skin actors, Wear, the recorder, reports, settings.
   - `test_lua_outfit_whole.py`: outfit mods applying as a whole, Auto Wear, barefoot variants,
-    Fix look.
+    empty textures and empty material slots on worn meshes, Fix look.
   - `test_lua_clean.py`: Clean, including object address reuse and level changes.
   - `test_lua_dispatch.py`: the threading model, and refusing to start on old UE4SS builds.
   - `test_lua_menu.py`: the menu, driven by keys and clicks.
@@ -112,6 +112,7 @@ crowded rows, cut text and highlights, not for exact pixels.
 - **`test_mixer.py`**: the Mixer on a fake library (`make_fake_library.py`): rules, apply,
   pending changes, atomic copies, refusing wrong folders.
 - **`test_relocate_e2e.py`**: the relocator end to end (see above).
+- **`test_relocate_units.py`**: small relocator functions that need no game files (shared-pak clashes).
 - **`test_relocation.py`**: same-length relocation of real cooked packages, read back with retoc.
 - **`test_previews.py`**: colour swatches from cooked textures, saved looks, the screenshot server.
 

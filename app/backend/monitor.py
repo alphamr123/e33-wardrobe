@@ -13,6 +13,10 @@ explained in docs/TROUBLESHOOTING.md.
     m.snapshot()                  # the Monitor shape of API.md (a copy)
     m.problems_text()             # plain text for a bug report
     m.poll_once()                 # one step without the thread (tests)
+    analyse(live=path, ue=path)   # one read of finished logs (the Game log tab when the game is closed)
+
+Each problem keeps the log lines that raised it (`lines`, the newest MAX_PROBLEM_LINES), so the
+Game log tab can show them on their own.
 """
 import collections
 import datetime as _dt
@@ -33,14 +37,18 @@ except ImportError:             # then "running" only comes from the session log
     e33common = None
 
 POLL_S = 1.0                    # one poll per second
-INITIAL_TAIL = 256 * 1024       # the first look at a file reads only its last 256 KB
-MAX_READ = 8 * 1024 * 1024      # a rewritten file larger than this is read from its last 256 KB
-TAIL_LINES = 200
+INITIAL_TAIL = 256 * 1024       # a rewritten file larger than MAX_READ is read from its last 256 KB
+FIRST_LOOK = 4 * 1024 * 1024    # the first look at a file (the app starting) reads its last 4 MB:
+                                # the whole of a normal session, so its problems show after the game closed
+MAX_READ = 8 * 1024 * 1024
+TAIL_LINES = 500
+FILE_TAIL_LINES = 5000          # analyse(): lines kept of a finished log
 MAX_PROBLEMS = 150
+MAX_PROBLEM_LINES = 25          # log lines kept per problem (they go to the page with every poll)
 GROWTH_RUNNING_S = 5.0          # live_log.txt grew this recently: the game runs
 LIVE_LOG, UE4SS_LOG = 'live_log.txt', 'UE4SS.log'
 LEVEL_ORDER = {'error': 0, 'warn': 1, 'info': 2}
-PUBLIC = ('key', 'level', 'title', 'detail', 'hint', 'first', 'last', 'count')
+PUBLIC = ('key', 'level', 'title', 'detail', 'hint', 'first', 'last', 'count')   # plus 'lines'
 _DEFAULT = object()
 
 SEND_REPORT = 'Send report.txt (Ctrl+F9 in game writes it) and say what you did just before.'
@@ -99,8 +107,9 @@ class _Tail:
     """Follows one growing text file: only the new complete lines on each read."""
     HEAD = 64
 
-    def __init__(self, path):
+    def __init__(self, path, first_look=FIRST_LOOK):
         self.path = path
+        self.first_look = first_look
         self.seen = False           # opened at least once
         self.looked = False         # stat-ed at least once (a file that appears later is growth)
         self.offset = 0
@@ -112,7 +121,7 @@ class _Tail:
         self.history = False        # the last read was the first look at an existing file
 
     def read(self):
-        """-> (lines, event, mid). event: None, 'new' (first look: from the last 256 KB) or
+        """-> (lines, event, mid). event: None, 'new' (first look: from the last `first_look` bytes) or
         'rotated' (rewritten or replaced: from the start). mid: reading began inside the file."""
         first_look, self.looked = not self.looked, True
         try:
@@ -129,7 +138,7 @@ class _Tail:
                 head = f.read(self.HEAD)
                 if not self.seen:
                     self.seen, event = True, 'new'
-                    self.offset, self.buf = max(0, st.st_size - INITIAL_TAIL), b''
+                    self.offset, self.buf = max(0, st.st_size - self.first_look), b''
                 elif self.size < 0 or st.st_size < self.offset or not _same_start(head, self.head):
                     event, self.offset, self.buf = 'rotated', 0, b''
                 if event == 'rotated' and st.st_size > MAX_READ:
@@ -186,6 +195,11 @@ def _redact(s):
 def _short(s, n):
     s = (s or '').strip()
     return s if len(s) <= n else s[:n - 3].rstrip() + '...'
+
+
+def _cap(s, n=1000):
+    """A log line for the page, at most n characters (keeps the indentation)."""
+    return s if len(s) <= n else s[:n - 3] + '...'
 
 
 def _norm(s):
@@ -307,6 +321,20 @@ RULES = [
          "The outfit mod's material points at a {param} texture the mod doesn't include. "
          'It was filled in automatically with {texleaf}{srcnote}.{whonote}',
          '', 'empty-texture:{char}:{param}:{texleaf}', attrib=True),
+    # A worn mod mesh with empty material slots (the game's skin Blueprint would fill them; Wear
+    # cleared that): the menu fills the slot with the body's material, or can't.
+    Rule('live', "mesh has no material for slot", r"^change \S+ \[(?P<char>[^\]]*)\]\.\S+: mat(?P<idx>\d+) empty "
+         r"\(the mod's mesh has no material for slot (?P<slot>[^)]*)\) and nothing to fill it with",
+         'warn', "An outfit part shows grey: the mod's mesh has no material for slot {slot}",
+         "{char}'s outfit: material {idx} (slot {slot}) is empty in the mod's mesh, and the body has no material "
+         'to fill it with, so that part shows grey.{whonote}', SEND_REPORT, 'grey-slot:{char}:{slot}', attrib=True),
+    Rule('live', "mesh has no material for slot", r"^change \S+ \[(?P<char>[^\]]*)\]\.\S+: mat(?P<idx>\d+) empty "
+         r"\(the mod's mesh has no material for slot (?P<slot>[^)]*)\) -> (?P<mat>\S+)(?: \((?P<src>[^)]*)\))?",
+         'info', "Filled an empty material slot on {char}'s outfit",
+         "The mod's mesh has no material for slot {slot} (material {idx}), so the menu used {matleaf}{srcnote}."
+         '{whonote}',
+         "The mod's mesh leaves this slot to the game; the menu uses the body's own material so it isn't grey. "
+         'If it looks wrong, send report.txt.', 'empty-material:{char}:{slot}:{matleaf}', attrib=True),
     Rule('live', 'ApplyCurrentCharacterSkin failed', r'^Fix look: ApplyCurrentCharacterSkin failed on (?P<who>\S+): (?P<err>.*)',
          'warn', "Fix look didn't work on some characters", '{err}', "Re-equip the outfit in the game's own menu instead.",
          'fix-look'),
@@ -355,10 +383,14 @@ _NOT_FRAMES = ('has enabled.txt', 'Starting Lua mod', 'disabled in mods.txt')
 # --------------------------------------------------------------------------- the monitor
 
 class Monitor:
-    def __init__(self, paths_provider, process_check=_DEFAULT, crash_dir=_DEFAULT, process_interval=3.0):
+    def __init__(self, paths_provider, process_check=_DEFAULT, crash_dir=_DEFAULT, process_interval=3.0,
+                 tail_lines=TAIL_LINES, first_look=FIRST_LOOK):
         """process_check() -> bool (default: e33common.game_running on Windows); crash_dir: folder
-        whose new subfolders are crashes (default: default_crash_dir(); None: off)."""
+        whose new subfolders are crashes (default: default_crash_dir(); None: off).
+        paths_provider() may also give 'live_file' / 'ue_file' (a path, or None for none) to read
+        other files than live_log.txt and UE4SS.log (analyse())."""
         self._paths_provider = paths_provider
+        self._tail_lines, self._first_look = tail_lines, first_look
         if process_check is _DEFAULT:
             process_check = e33common.game_running if (e33common and sys.platform == 'win32') else None
         self._proc_check = process_check
@@ -381,7 +413,7 @@ class Monitor:
         self.menu_active = False
         self.game_running = False
         self.on_screen = []
-        self.tail = collections.deque(maxlen=TAIL_LINES)
+        self.tail = collections.deque(maxlen=self._tail_lines)
         self._screen_new = None         # on-screen rows of the pass being read
         self._picks, self._pick_texts, self._slot_char = set(), [], {}
         self._session_dt = self._session_origin = None
@@ -395,6 +427,10 @@ class Monitor:
         self._lp_date = self._lp_tod = self._lp_dt = None
         self._up_dt = None
         self._history = False
+        self._cur_line = None           # the line being read: problems keep it (see _add_lines)
+        self.ue_tail = collections.deque(maxlen=self._tail_lines)    # UE4SS.log lines, "HH:MM:SS text"
+        self._newest = None             # time of the newest line read from either log
+        self._n_lines = 0               # lines read (both logs)
 
     @staticmethod
     def _new_ue(start):
@@ -434,7 +470,9 @@ class Monitor:
                 'since': self.since,
                 'menu_active': bool(self.menu_active),
                 'last_activity': self.last_activity,
-                'problems': [{k: p[k] for k in PUBLIC} for p in probs],
+                'ended': _hms(self._newest),
+                'date': self._newest.strftime('%Y-%m-%d') if self._newest else None,
+                'problems': [dict({k: p[k] for k in PUBLIC}, lines=list(p.get('_lines') or [])) for p in probs],
                 'on_screen': [dict(r) for r in self.on_screen],
                 'tail': list(self.tail),
             }
@@ -460,6 +498,8 @@ class Monitor:
                 out.append('  ' + p['detail'])
             if p['hint']:
                 out.append('  What to do: ' + p['hint'])
+            for ln in p['lines'][-3:]:
+                out.append('  Log: ' + ln)
             out.append('')
         if s['on_screen']:
             out.append('On screen after the last pass:')
@@ -481,15 +521,11 @@ class Monitor:
                 events += self._read_live()
             if events:
                 events.sort(key=lambda e: e[0])        # stable: each file keeps its order
-                for dt, src, text, cont, hist in events:
-                    self._history = hist        # old lines: no "the menu is working right now"
-                    if src == 'ue-start':
-                        self._ue_start(dt)
-                    elif src == 'live':
-                        self._live_line(dt, text, cont, now)
-                    else:
-                        self._ue_line(dt, text, cont, now)
-                self._history = False
+                try:
+                    self._read_events(events, now)
+                finally:
+                    self._history = False
+                    self._cur_line = None
             proc = self._proc_running(now)
             if self._proc_prev and not proc:
                 self._on_exit(now)
@@ -498,6 +534,24 @@ class Monitor:
             self.game_running = bool(proc or grew)
             self._check_crashes(now)
             self._check_menu_start()
+
+    def _read_events(self, events, now):
+        for dt, src, text, cont, hist in events:
+            self._history = hist            # old lines: no "the menu is working right now"
+            if dt is not None and (self._newest is None or dt > self._newest):
+                self._newest = dt
+            self._n_lines += src != 'ue-start'
+            if src == 'ue-start':
+                self._cur_line = None
+                self._ue_start(dt)
+            elif src == 'live':
+                self._cur_line = text if cont else f'{_hms(dt)} {text}'
+                self._live_line(dt, text, cont, now)
+            else:
+                self.ue_tail.append(_cap(text if cont else f'{_hms(dt)} {text}'))
+                self._cur_line = f'{_hms(dt)} [UE4SS] {text.strip()}'
+                self._ue_line(dt, text, cont, now)
+            self._cur_line = None
 
     # ------------------------------------------------------------------ threads
 
@@ -541,14 +595,15 @@ class Monitor:
             p = {}
         ue = p.get('ue4ss_dir')
         menu = p.get('menu_dir') or (os.path.join(ue, 'Mods', 'E33Wardrobe') if ue else None)
-        key = (os.path.join(menu, LIVE_LOG) if menu else None, os.path.join(ue, UE4SS_LOG) if ue else None)
+        key = (p['live_file'] if 'live_file' in p else (os.path.join(menu, LIVE_LOG) if menu else None),
+               p['ue_file'] if 'ue_file' in p else (os.path.join(ue, UE4SS_LOG) if ue else None))
         if key == self._paths_key:
             return
         if self._paths_key is not None:     # another game folder: start over
             self._reset()
         self._paths_key, self._menu_dir = key, menu
-        self._live = _Tail(key[0]) if key[0] else None
-        self._uel = _Tail(key[1]) if key[1] else None
+        self._live = _Tail(key[0], self._first_look) if key[0] else None
+        self._uel = _Tail(key[1], self._first_look) if key[1] else None
 
     def _read_ue(self):
         lines, event, _mid = self._uel.read()
@@ -615,6 +670,7 @@ class Monitor:
         prev = [p for p in self.problems.values() if p['key'] != 'previous-session']
         self.problems = {}
         if prev:
+            self._cur_line, cur = None, self._cur_line      # the line that started the new session isn't one of them
             prev.sort(key=lambda p: (LEVEL_ORDER.get(p['level'], 3), p['_n']))
             names = '; '.join(p['title'] for p in prev[:3])
             more = f'; and {len(prev) - 3} more' if len(prev) > 3 else ''
@@ -622,6 +678,7 @@ class Monitor:
                           f'{names}{more}.', "They are in live_log_previous.txt, which report.txt includes.", None,
                           hms=max(p['last'] for p in prev))
             p['first'] = min(x['first'] for x in prev)
+            self._cur_line = cur
         self.since, self._session_dt, self._session_origin = _hms(dt), dt, origin
         self._session_reset()
         self.menu_active = False
@@ -649,14 +706,14 @@ class Monitor:
 
     def _live_line(self, dt, msg, cont, now):
         if cont:
-            self.tail.append(msg)
+            self.tail.append(_cap(msg))
             self._apply(_CONT_RULES, msg, 'live', dt)
             return
         s = msg.lstrip()
         if s.startswith('session start '):
             self._live_session(dt)
         hms = _hms(dt)
-        self.tail.append(f'{hms} {msg}')
+        self.tail.append(_cap(f'{hms} {msg}'))
         self.last_activity = hms
         if s.startswith('on screen: '):
             self._on_screen_line(s, dt)
@@ -694,6 +751,7 @@ class Monitor:
         if pl is not None:                  # a Lua error a few lines up: is it the menu's?
             if 'E33Wardrobe' in text and '[E33Wardrobe] ' not in text and not any(x in text for x in _NOT_FRAMES):
                 self._pending_lua = None
+                self._cur_line = [pl[3], self._cur_line]
                 self._hit(RULE_UE_LUA, f'{pl[0].strip()} / {text.strip()}', 'ue', pl[1])
                 return
             pl[2] -= 1
@@ -722,7 +780,7 @@ class Monitor:
             if m:
                 self._ue4ss_version = m.group(1)
         if not self._apply(_BY_SOURCE['ue4ss'], text, 'ue', dt) and _LUA_GENERIC.search(text):
-            self._pending_lua = [text, dt, 8]
+            self._pending_lua = [text, dt, 8, self._cur_line]
 
     def _mod_msg(self, text, src, dt):
         if text.startswith('menu closed'):
@@ -763,11 +821,17 @@ class Monitor:
             v['texleaf'] = _leaf(v['tex'])
             src_note = v.get('src', '')
             v['srcnote'] = " (the mod's own)" if 'own' in src_note else (f' ({src_note})' if src_note else '')
+        if 'mat' in v:
+            v['matleaf'] = _leaf(v['mat'])
+            v['srcnote'] = f" ({v['src']})" if v.get('src') else ''
         key = _short(_fill(r.key, v), 200)
         if mod and self._dup(key, text, src, dt):
             return None
         if r.attrib and key in self._pass_keys:     # the same fill on another actor in this pass
-            return self.problems.get(key)
+            p = self.problems.get(key)
+            if p is not None:
+                self._add_lines(p)
+            return p
         p = self._put(key, r.level, _fill(r.title, v), _fill(r.detail, v), _fill(r.hint, v), dt, rule=r, v=v)
         if r.explains:
             self._ue['explained'] = True
@@ -791,14 +855,30 @@ class Monitor:
         if p:
             p['count'] += 1
             p['last'] = t
+            self._add_lines(p)
             return p
         if len(self.problems) >= MAX_PROBLEMS and level != 'error':
             return None
         self._n += 1
         p = {'key': key, 'level': level, 'title': _short(title, 120), 'detail': _short(detail, 500),
-             'hint': _short(hint, 300), 'first': t, 'last': t, 'count': 1, '_n': self._n, '_rule': rule, '_v': v}
+             'hint': _short(hint, 300), 'first': t, 'last': t, 'count': 1, '_n': self._n, '_rule': rule, '_v': v,
+             '_lines': []}
         self.problems[key] = p
+        self._add_lines(p)
         return p
+
+    def _add_lines(self, p):
+        """Keep the log line(s) being read with the problem they raised."""
+        cur = self._cur_line
+        if not cur:
+            return
+        lines = p.setdefault('_lines', [])
+        for ln in (cur if isinstance(cur, list) else [cur]):
+            ln = _short(_redact(ln or ''), 500)        # user names hidden: these go into copied bug reports
+            if ln and (not lines or lines[-1] != ln):
+                lines.append(ln)
+        if len(lines) > MAX_PROBLEM_LINES:
+            del lines[:len(lines) - MAX_PROBLEM_LINES]
 
     def _work(self, now, desc):
         if not self._history:
@@ -878,6 +958,7 @@ class Monitor:
         p = self.problems.get(key)
         if p and p['_v'].get('since') == since and since:
             p['last'] = _hms(dt)            # the same stall, still going: not another one
+            self._add_lines(p)
         else:
             p = self._put(key, 'warn', '', '', '', dt, v=_Vars(max=0))
             if p is None:
@@ -1009,3 +1090,19 @@ class Monitor:
 def _ue_dt(m):
     return _dt.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)),
                         int(m.group(6)), int((m.group(7) or '0')[:6].ljust(6, '0')))
+
+
+def analyse(live=None, ue=None, tail_lines=FILE_TAIL_LINES, menu_dir=None):
+    """One read of logs of a game that has ended: `live` (live_log.txt or live_log_previous.txt)
+    and/or `ue` (UE4SS.log), through the same rules as the live monitor. Missing files are
+    skipped. Returns the Monitor shape (watching and game_running false) plus 'ue_tail' (UE4SS.log
+    lines), 'lines' (lines read), 'menu_version' and 'ue4ss_version'. Lines are cut at 1000
+    characters, as in the live tail. menu_dir: for the hints when the menu didn't start."""
+    files = {'live_file': live if live and os.path.isfile(live) else None,
+             'ue_file': ue if ue and os.path.isfile(ue) else None, 'menu_dir': menu_dir}
+    m = Monitor(lambda: files, process_check=None, crash_dir=None, tail_lines=tail_lines, first_look=MAX_READ)
+    m.poll_once()
+    snap = m.snapshot()
+    snap.update(watching=False, game_running=False, ue_tail=list(m.ue_tail), lines=m._n_lines,
+                menu_version=m._menu_version, ue4ss_version=m._ue4ss_version)
+    return snap

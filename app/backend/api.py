@@ -5,6 +5,7 @@ polls poll().
 The window code sets `api.dialogs` to an object with folder() -> path | None and files() -> [paths].
 """
 import functools
+import hashlib
 import os
 import subprocess
 import threading
@@ -325,19 +326,19 @@ class Api:
             return {'ok': False, 'error': f'There is no mod named "{mod_id}".'}
         return d
 
-    def _known(self, mod_id):
-        if library.safe_child(self._library() or os.sep, mod_id) is None:
+    def _known(self, mod_id, v=None):
+        if not isinstance(mod_id, str) or library.safe_child(self._library() or os.sep, mod_id) is None:
             return None
-        v = self._view()
+        v = v if isinstance(v, library.View) else self._view()
         if v.folder(mod_id) or mod_id in v.by_name:
             return v
         return None
 
     @api_method
-    def reinstall_mod(self, mod_id):
+    def reinstall_mod(self, mod_id, _view=None):
         if not self._game:
             return {'ok': False, 'error': NO_GAME}
-        v = self._known(mod_id)
+        v = self._known(mod_id, _view)
         if v is None or not v.folder(mod_id):
             return {'ok': False, 'error': f'The folder of "{mod_id}" is missing from the library.'}
         same = self._jobs.pending('reinstall', mod_id)
@@ -346,16 +347,51 @@ class Api:
         return {'ok': True, 'jobs': [self._jobs.reinstall(mod_id, library.folder_size(v.folder(mod_id)))]}
 
     @api_method
-    def remove_mod(self, mod_id, delete_files=False):
+    def remove_mod(self, mod_id, delete_files=False, _view=None):
         if not self._game:
             return {'ok': False, 'error': NO_GAME}
-        v = self._known(mod_id)
+        v = self._known(mod_id, _view)
         if v is None:
             return {'ok': False, 'error': f'There is no mod named "{mod_id}".'}
         same = self._jobs.pending('remove', mod_id)
         if same:
             return {'ok': True, 'jobs': [same]}
         return {'ok': True, 'jobs': [self._jobs.remove(mod_id, bool(delete_files))]}
+
+    def _many(self, ids, one):
+        if isinstance(ids, str):
+            ids = [ids]
+        if not isinstance(ids, (list, tuple)) or not ids:
+            return {'ok': False, 'error': 'No mods given.'}
+        jobs_out, errors = [], []
+        view = self._view() if self._game else None      # one read of the library for the whole batch
+        for mod_id in ids:
+            r = one(mod_id, view)
+            if r.get('ok'):
+                jobs_out += [j for j in r.get('jobs', []) if j not in jobs_out]
+            else:
+                errors.append({'id': mod_id, 'error': r.get('error') or 'Something went wrong.'})
+        if not jobs_out:
+            return {'ok': False, 'error': errors[0]['error'] if len(errors) == 1 else
+                    f"None of the {len(errors)} mods could be queued: {errors[0]['error']}", 'errors': errors}
+        return {'ok': True, 'jobs': jobs_out, 'errors': errors}
+
+    @api_method
+    def reinstall_mods(self, mod_ids):
+        """reinstall_mod for each; one job per mod. {ok, jobs, errors: [{id, error}]}"""
+        return self._many(mod_ids, lambda m, v: self.reinstall_mod(m, _view=v))
+
+    @api_method
+    def remove_mods(self, mod_ids, delete_files=False):
+        """remove_mod for each; one job per mod. {ok, jobs, errors: [{id, error}]}"""
+        return self._many(mod_ids, lambda m, v: self.remove_mod(m, delete_files, _view=v))
+
+    @api_method
+    def texture_preview(self, mod_id, ref, max_px=1024):
+        if not isinstance(mod_id, str) or self._known(mod_id) is None:
+            return {'ok': False, 'error': f'There is no mod named "{mod_id}".'}
+        from . import assets
+        return assets.texture_preview(self._view(), mod_id, ref, max_px)
 
     # ------------------------------------------------------------------ the in-game menu
 
@@ -454,7 +490,47 @@ class Api:
             except Exception:
                 _log_error('monitor.snapshot', traceback.format_exc())
         return {'watching': False, 'game_running': self._game_running(), 'since': None, 'menu_active': False,
-                'last_activity': None, 'problems': [], 'on_screen': [], 'tail': []}
+                'last_activity': None, 'ended': None, 'date': None, 'problems': [], 'on_screen': [], 'tail': []}
+
+    _LOG_FILES = {'last': ('live_log.txt', True), 'previous': ('live_log_previous.txt', False), 'ue4ss': (None, True)}
+
+    @api_method
+    def monitor_file(self, which, known=None):
+        """The logs of a game that has ended, read once through the monitor's rules. which: 'last'
+        (live_log.txt and UE4SS.log), 'previous' (live_log_previous.txt) or 'ue4ss' (UE4SS.log).
+        known: the version the page already has; then only {unchanged, version} comes back."""
+        if which not in self._LOG_FILES:
+            return {'ok': False, 'error': 'Unknown log.'}
+        from . import monitor as mon
+        g = self._game or {}
+        menu, ue = self._lua_dir(), paths.ue4ss_dir(g.get('root')) if g.get('root') else None
+        live_name, with_ue = self._LOG_FILES[which]
+        live = os.path.join(menu, live_name) if (menu and live_name) else None
+        uel = os.path.join(ue, 'UE4SS.log') if (ue and with_ue) else None
+        files = [f for f in (live, uel) if f]
+        key = (which, tuple((f, *self._stat(f)) for f in files))
+        version = hashlib.sha1(repr(key).encode('utf-8')).hexdigest()[:16]
+        if known and known == version:
+            return {'ok': True, 'unchanged': True, 'version': version, 'which': which}
+        hit = getattr(self, '_file_cache', {}).get(which)
+        if hit and hit[0] == key:
+            res = hit[1]
+        else:
+            res = mon.analyse(live=live, ue=uel, menu_dir=menu)
+            if which == 'ue4ss':
+                res['tail'] = res['ue_tail']
+            res.pop('ue_tail', None)
+            res['files'] = [f for f in files if os.path.isfile(f)]
+            self._file_cache = dict(getattr(self, '_file_cache', {}), **{which: (key, res)})
+        return dict(res, which=which, exists=bool(res['files']), version=version)
+
+    @staticmethod
+    def _stat(f):
+        try:
+            st = os.stat(f)
+            return st.st_size, st.st_mtime_ns
+        except OSError:
+            return None, None
 
     @api_method
     def problems_text(self):

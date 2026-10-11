@@ -584,8 +584,14 @@ def texture_info(base, entry, candidates):
         score = e33tex.color_score(entry.get('object') or os.path.basename(base), fmt)
         if score >= 0:
             candidates.append((-score, base))
-    except Exception:
-        pass
+    except Exception as e:
+        # the size from the header alone, and why the full read failed (the app shows both)
+        entry['tex_error'] = f'{type(e).__name__}: {e}'[:200]
+        try:
+            w, h, fmt = e33tex.texture_header(base)
+            entry.update(width=w, height=h, format=fmt)
+        except Exception:
+            pass
 
 
 def write_swatches(candidates, packages_by_base, out_dir, stem):
@@ -811,6 +817,20 @@ def write_variants_lua(path, mods):
     with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(lines) + '\n')
     os.replace(tmp, path)
+
+
+def shared_clashes(registry):
+    """Mod-only paths that several mods' shared paks hold: {path: [mod names]}. PrimaryAssetLabels
+    (cook metadata such as /Game/chic_MyMod) do nothing in game and are left out."""
+    labels = {k.lower() for m in registry for sl in m.get('slots', []) for v in sl.get('variants', [])
+              for k, c in (v.get('classes') or {}).items()
+              if isinstance(c, dict) and c.get('class') == 'PrimaryAssetLabel'}
+    clashes = {}
+    for m in registry:
+        for p in m.get('shared', []):
+            if p.lower() not in labels:
+                clashes.setdefault(p, []).append(m['name'])
+    return {p: n for p, n in clashes.items() if len(n) > 1}
 
 
 def update_registry(path, mods_out, partial):
@@ -1204,11 +1224,7 @@ def _main(argv, tee):
             if n:
                 print(f'Lua mod: {n} file(s) installed or updated')
         registry = update_registry(os.path.join(lua_dir, 'wardrobe_registry.json'), mods_out, bool(a.only))
-        clashes = {}
-        for m in registry:
-            for p in m.get('shared', []):
-                clashes.setdefault(p, []).append(m['name'])
-        dup = {p: n for p, n in clashes.items() if len(n) > 1}
+        dup = shared_clashes(registry)
         if dup:
             p, n = next(iter(dup.items()))
             print(f'WARNING: {len(dup)} mod-only asset path(s) exist in several mods\' shared paks '

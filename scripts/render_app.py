@@ -24,7 +24,8 @@ INDEX = HERE.parent / 'app' / 'ui' / 'index.html'
 SCREENS = [
     'setup_not_found', 'setup_ok', 'setup_ue4ss_old',
     'mods_empty', 'mods_list', 'mods_details', 'mods_chic', 'tasks_running', 'confirm_remove',
-    'gamelog_running', 'gamelog_idle', 'drop_overlay', 'help',
+    'mods_bulk', 'mods_expanded', 'mods_lune_color', 'ctx_details', 'ctx_modlist', 'image_viewer', 'confirm_bulk_remove',
+    'gamelog_running', 'gamelog_idle', 'gamelog_filter', 'gamelog_last', 'gamelog_previous', 'drop_overlay', 'help',
 ]
 DEFAULT_CHROME = os.path.expanduser('~/.cache/ms-playwright/chromium-1187/chrome-linux/chrome')
 DEFAULT_FONTS = os.environ.get('E33_RENDER_FONTS')   # a folder with Roboto.ttf, to stand in for Segoe UI

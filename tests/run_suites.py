@@ -22,9 +22,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 LUA = ['test_lua_mock', 'test_lua_mock_real', 'test_lua_switching', 'test_lua_coverage',
        'test_lua_dispatch', 'test_lua_menu', 'test_lua_outfit_whole', 'test_lua_clean']
-PLAIN = ['test_mixer', 'test_app_monitor', 'test_app_backend']
+PLAIN = ['test_mixer', 'test_relocate_units', 'test_app_monitor', 'test_app_backend']
 DATA = {
-    'test_app_ui': ('E33_E2E_PAKS', 'E33_RETOC', 'E33_SAMPLE_ARCHIVES'),
+    'test_app_ui': ('E33_E2E_PAKS', 'E33_RETOC', 'E33_SAMPLE_ARCHIVES', 'E33_E2E_BASE'),
     'test_relocate_e2e': ('E33_E2E_PAKS', 'E33_E2E_BASE', 'E33_RETOC'),
     'test_previews': ('E33_PREVIEW_GLOBAL', 'E33_PREVIEW_LEGACY', 'E33_RETOC'),
     'test_relocation': ('E33_RELOC_SRC', 'E33_RETOC'),

@@ -14,8 +14,9 @@
     <button class="btn tb" data-act="add-files" title="Add mod archives (zip, 7z, rar)">Add mods...</button>
     <button class="btn tb" data-act="add-folder" title="Add a mod that is already unpacked">Add folder...</button>
     <span class="tb-sep"></span>
-    <button class="btn tb" data-act="reinstall" data-needs-mod title="Prepare the selected mod again">Reinstall</button>
-    <button class="btn tb" data-act="remove" data-needs-mod title="Remove the selected mod (Delete)">Remove</button>
+    <button class="btn tb" data-act="reinstall" data-needs-mod id="tb-reinstall" title="Prepare the selected mod again">Reinstall</button>
+    <button class="btn tb" data-act="remove" data-needs-mod id="tb-remove" title="Remove the selected mod (Delete)">Remove</button>
+    <button class="btn tb" data-act="reinstall-all" id="tb-reinstall-all" title="Prepare every mod in the list again">Reinstall all</button>
     <span class="tb-sep"></span>
     <button class="btn tb" data-act="open-library" title="Open the mod library in Explorer">Open mods folder</button>
     <span class="tb-fill"></span>
@@ -37,12 +38,13 @@
       <div class="split" id="mods-split">
         <div class="pane pane-left" id="mods-left">
           <div class="lv" id="modlist" tabindex="0">
-            <table>
+            <table data-cols="mods">
               <colgroup>
-                <col class="c-mod"><col class="c-chars"><col class="c-repl">
+                <col class="c-chk"><col class="c-mod"><col class="c-chars"><col class="c-repl">
                 <col class="c-opts"><col class="c-size"><col class="c-state">
               </colgroup>
               <thead><tr>
+                <th class="chk-cell"><input type="checkbox" id="chk-all" tabindex="-1" title="Select all mods in the list"></th>
                 <th data-sort="name">Mod</th>
                 <th data-sort="characters">Characters</th>
                 <th data-sort="replaces">Replaces</th>
@@ -54,13 +56,18 @@
             </table>
             <div class="lv-empty" id="modlist-empty" hidden></div>
           </div>
+          <div class="list-filter">
+            <label for="mod-filter">Filter:</label>
+            <input type="text" id="mod-filter" class="field" spellcheck="false" autocomplete="off" title="Mod name, character or outfit">
+            <span class="muted" id="mod-count"></span>
+          </div>
         </div>
         <div class="splitter-v" id="mods-splitter" title="Drag to resize"></div>
         <div class="pane pane-right" id="details">
           <div class="details-scroll" id="details-body"></div>
           <div class="buttonbar" id="details-buttons">
-            <button class="btn" data-act="reinstall" data-needs-mod id="btn-reinstall">Reinstall</button>
-            <button class="btn" data-act="remove" data-needs-mod>Remove...</button>
+            <button class="btn" data-act="reinstall-shown" id="btn-reinstall" title="Prepare this mod again">Reinstall</button>
+            <button class="btn" data-act="remove-shown" id="btn-remove" title="Remove this mod">Remove...</button>
             <button class="btn" data-act="open-mod" data-needs-mod>Open folder</button>
           </div>
         </div>
@@ -74,7 +81,7 @@
           <button class="btn small" data-act="clear-finished" id="btn-clear">Clear finished</button>
         </div>
         <div class="lv" id="tasklist">
-          <table>
+          <table data-cols="tasks">
             <colgroup>
               <col class="c-tname"><col class="c-tkind"><col class="c-tsize">
               <col class="c-tstep"><col class="c-tprog"><col class="c-tstat">
@@ -94,6 +101,12 @@
         <span class="ico" id="log-ico"></span>
         <span class="infobar-text" id="log-status">Reading the game's logs...</span>
         <span class="tb-fill"></span>
+        <label for="log-source">Show:</label>
+        <select id="log-source" class="field" title="Which log to read">
+          <option value="this">This session</option>
+          <option value="previous">Previous session</option>
+          <option value="ue4ss">UE4SS.log</option>
+        </select>
         <button class="btn" data-act="copy-problems">Copy problems</button>
         <button class="btn" data-act="open-report">Open report.txt</button>
         <button class="btn" data-act="open-logs">Open log folder</button>
@@ -103,7 +116,7 @@
         <fieldset class="gb gb-fill" id="gb-problems">
           <legend>Problems</legend>
           <div class="lv lv-grow" id="problemlist" tabindex="0">
-            <table>
+            <table data-cols="problems">
               <colgroup><col class="c-sev"><col class="c-time"><col class="c-ptitle"><col class="c-count"></colgroup>
               <thead><tr><th></th><th>Time</th><th>Problem</th><th class="num">Count</th></tr></thead>
               <tbody></tbody>
@@ -114,9 +127,9 @@
         </fieldset>
 
         <fieldset class="gb gb-fill" id="gb-onscreen">
-          <legend>On screen now</legend>
-          <div class="lv lv-grow" id="onscreenlist">
-            <table>
+          <legend id="onscreen-legend">On screen now</legend>
+          <div class="lv lv-grow" id="onscreenlist" tabindex="0">
+            <table data-cols="onscreen">
               <colgroup><col class="c-slot"><col class="c-variant"><col class="c-shown"><col class="c-worn"></colgroup>
               <thead><tr><th>Slot</th><th>Variant</th><th class="num">Shown</th><th>Worn</th></tr></thead>
               <tbody></tbody>
@@ -134,6 +147,11 @@
           <label class="check"><input type="checkbox" id="log-autoscroll" checked> Auto-scroll</label>
           <span class="tb-fill"></span>
           <span class="muted" id="log-count"></span>
+        </div>
+        <div class="itemfilter" id="log-itemfilter" hidden>
+          <span class="ico small info"></span>
+          <span class="itemfilter-text">Showing lines for: <b id="log-itemfilter-name"></b></span>
+          <button class="btn small" data-act="log-show-all" title="Show every line (Esc)">Show all</button>
         </div>
         <pre class="logview sunken" id="logview" tabindex="0"></pre>
       </fieldset>
@@ -175,6 +193,7 @@
   </div>
 </div>
 <div id="ctxmenu" class="ctxmenu" hidden></div>
+<div id="viewer-layer" hidden></div>
 <div id="modal-layer" hidden></div>
 
 <script src="app.js"></script>
