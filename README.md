@@ -1,23 +1,24 @@
 # E33 Wardrobe
 
-An in-game outfit menu for **Clair Obscur: Expedition 33**. Pick outfit-mod variants per
-character and see them right away, without restarting the game.
+Install all your outfit mods for **Clair Obscur: Expedition 33** at once and switch between them
+in game, per character, without restarting.
 
-Most outfit mods replace game files, so only one variant can be installed at a time. E33 Wardrobe
-repacks each variant so they can all be installed together, and the menu switches between them
-while you play.
+Most outfit mods replace game files, so only one variant can be installed at a time. The
+E33 Wardrobe app repacks each mod so they can all be installed together, and the in-game menu
+switches between them while you play.
 
 ## What's included
 
+- **App** (`E33 Wardrobe.exe`, Windows): the main tool. It finds the game, installs the in-game
+  menu, and prepares outfit mods: drop the downloads (zip, 7z, rar) on the window. It shows what
+  each mod changes (rows, options, textures, skin, overlaps) and reads the game's logs to point
+  out problems.
 - **In-game menu** (UE4SS mod). Press **Delete**.
   - One tab per character; pick, step through or turn off each mod.
   - **Auto Wear:** a mod made for another outfit is put on in place of the current one.
   - **Favorites:** save looks per character and order them.
   - **Clean:** removes blood and dirt from all characters. No files changed.
   - **Fix look**, presets, undo, randomize.
-- **App** (`E33 Wardrobe.exe`): finds the game, installs the in-game menu, and prepares outfit
-  mods for it: drop the downloads on the window. Shows what each mod changes, and follows the
-  game's logs while you play.
 - **Command-line tools** (Python), for those who prefer them: the relocator the app uses.
 
 ## Install
