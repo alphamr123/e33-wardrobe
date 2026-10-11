@@ -113,7 +113,7 @@ def main():
     errors = [l for l in G.getlog().split('\n') if 'failed' in l]
     print(('PASS' if not errors else 'FAIL') + ' no apply errors' + ('' if not errors else f' -> {errors}'))
     fails += bool(errors)
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0
 

@@ -204,7 +204,7 @@ def main():
     G.settle()
     check('  Unwear: the outfit with its own texture again', mesh().startswith('/Game/Characters/ZWOUTFITA/')
           and tex() == TEX_OUTFIT, (mesh(), tex()))
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
 
     # ---- PC session 9: a barefoot variant left boot parts on a freshly spawned skin
@@ -232,7 +232,7 @@ def main():
     G.settle()
     check('  both off: the game\'s own mesh and material', mesh().startswith('/Game/Characters/Lune/')
           and slot0(body).startswith('/Game/Characters/Lune/Chic/MI_Chic'), (mesh(), slot0(body)))
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
     # ---- Auto Wear on (default)
     tmp, mod, L, G, W, mesh, tex = run('')
@@ -269,7 +269,7 @@ def main():
           G.FIXARG == 'Lune' and W.lastFix().n == 1 and 're-dressed 1 of 1 character(s) (Lune)' in G.getlog()
           and 'ApplyCurrentCharacterSkin(NameProperty Character Name) - calling it with each character\'s name' in live,
           (G.FIXARG, G.getlog()[-300:]))
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
     # ---- a costume with a mesh per character becomes one slot per character (PC: switching it for
     # one character switched it for all; before that, nothing changed and no Auto Wear)
@@ -295,7 +295,7 @@ def main():
     W.setVariant(li, 0)
     G.settle()
     check('  switching Lune\'s slot off: back to Chic', mesh() == CHIC, mesh())
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
     # ---- a mod material with an empty texture slot gets what the body showed before
     tmp, mod, L, G, W, mesh, tex = run('')
@@ -308,7 +308,7 @@ def main():
           'named like the old one (T_Chic_D -> T_Chic_D-mod), not grey',
           mesh().startswith('/Game/Characters/ZWGREY/') and tex() == '/Game/Characters/ZWGREY/Chic/T_Chic_D-mod.T_Chic_D-mod'
           and "(the mod's own texture for it)" in live, (mesh(), tex(), [l for l in live.splitlines() if 'empty' in l][:2]))
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
     # ---- the same, but the mod's texture has another name (PC: Sciel's Cheeki body, body_high_BaseColor-nude)
     tmp, mod, L, G, W, mesh, tex = run('')
@@ -319,14 +319,14 @@ def main():
     check('  a texture of the mod named for the kind of parameter (BaseColor -> body_high_BaseColor), not underwear',
           mesh().startswith('/Game/Characters/ZWGREY2/') and tex() == '/Game/Characters/ZWGREY2/Body/body_high_BaseColor-mod.body_high_BaseColor-mod',
           (mesh(), tex()))
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
     # an old pick saved under the unsplit slot is carried over too
     tmp, mod, L, G, W, mesh, tex = run('', selection='K/main\tK/a\n')
     sel = open(os.path.join(mod, 'selection.txt'), encoding='utf-8').read()
     check('a pick saved under the old slot moves to each character\'s slot',
           'K/main@Lune\tK/a@Lune' in sel and 'K/main@Maelle\tK/a@Maelle' in sel and 'K/main\tK/a\n' not in sel, sel)
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0
 

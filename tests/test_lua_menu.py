@@ -795,7 +795,7 @@ def main():
     key('C+F8')
     check('a look saved before a slot was split per character moves to that character\'s slot (others dropped)',
           favs() == [('Lune', 'Costume', 'K/main@Lune', 'K/a@Lune')], favs())
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0
 

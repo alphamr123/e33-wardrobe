@@ -141,7 +141,7 @@ def main():
     off = list(G.OFFTHREAD.values())
     check('no engine call off the game thread', not off, off)
     check('delayed work scheduled on the game thread (no Lua on the async thread)', G.ASYNCRUNS == 0, f'{G.ASYNCRUNS} async callbacks')
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0
 

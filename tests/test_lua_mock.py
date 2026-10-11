@@ -285,7 +285,7 @@ def main():
     L.execute('table.remove(ACTORS, 1)')
     errors = [l for l in G.getlog().split('\n') if 'failed' in l or 'could not' in l]
     check('no apply errors logged', not errors, errors)
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0
 

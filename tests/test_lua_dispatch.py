@@ -150,7 +150,7 @@ def main():
     G.asyncTick()
     check('  once per stall (not every second)', live().count('WATCHDOG') == 1)
     check('  and it never queued anything', G.EIGT == 0 and G.EWD == 0)
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
     # a UE4SS build without LoopInGameThreadWithDelay
     tmp, L, body = load(no_gt_loop=True)
@@ -160,7 +160,7 @@ def main():
           'queueing from other threads (which can crash those builds)',
           G.EIGT == 0 and len(list(G.ASYNC_LOOPS.values())) == 0 and 'too old for E33Wardrobe' in G.getlog()
           and G.CMDS['wardrobe'] is None, (G.EIGT, len(list(G.ASYNC_LOOPS.values())), G.CMDS['wardrobe']))
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0
 
