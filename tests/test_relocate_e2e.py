@@ -334,6 +334,19 @@ def main():
     check('--mod with just a name uses the library next to Paks', rc == 0
           and os.path.isdir(os.path.join(tmp, 'out6', 'TestMod')), (rc, log11[-300:]))
 
+    # ---- --save remembers the Paks folder for later runs (its own settings file)
+    cfgf = os.path.join(tmp, 'e33wardrobe_config.json')
+    os.environ['E33_CONFIG'] = cfgf
+    rc, log12 = run([sys.executable, '-I', os.path.join(TOOLS, 'e33_relocate.py'), '--paks', paks6, '--save'])
+    saved = json.load(open(cfgf)) if os.path.isfile(cfgf) else {}
+    rc2, log13 = run([sys.executable, '-I', os.path.join(TOOLS, 'e33_relocate.py'), '--retoc', retoc, '--mod', 'TestMod',
+                      '--out', os.path.join(tmp, 'out7'), '--lua-dir', os.path.join(tmp, 'lua7'), '--work', tmp,
+                      '--only', 'Red_P'])
+    del os.environ['E33_CONFIG']
+    check('--save stores the Paks folder; a later run without --paks uses it',
+          rc == 0 and saved.get('paks_dir') == paks6 and rc2 == 0 and os.path.isdir(os.path.join(tmp, 'out7', 'TestMod')),
+          (rc, saved, rc2, log13[-300:]))
+
     # ---- --remove takes a mod out of the wardrobe
     rc, log10 = run(reloc + ['--remove', 'testmod', '--out', os.path.join(tmp, 'out5'), '--lua-dir', lua5])
     vl = open(os.path.join(lua5, 'Scripts', 'variants.lua')).read()

@@ -250,6 +250,18 @@ def main():
         p = os.path.join(mod, 'settings.txt')
         return open(p, encoding='utf-8').read() if os.path.isfile(p) else ''
 
+    def favs():
+        p = os.path.join(mod, 'favorites.txt')
+        if not os.path.isfile(p):
+            return []
+        return [tuple(x.split('\t')) for x in open(p, encoding='utf-8').read().splitlines()]
+
+    def fav_rows():
+        return [(b.label, b.value) for b in G.screen().values() if b.cap == 'Use']
+
+    def use_btns():
+        return [b for b in G.screen().values() if b.cap == 'Use']
+
     def mesh():
         return L.eval('function(b) return b._mesh._path end')(body)
 
@@ -307,7 +319,11 @@ def main():
     f = G.focused()
     check('the first key only shows the focus (on the Lune tab) and the key help',
           f is not None and f.cap == 'Lune' and 'Ctrl+Up/Ctrl+Down row' in screen_text(), f and (f.cap, f.label))
-    key('C+DOWN_ARROW')      # skips the "Lune wears" row (no buttons)
+    key('C+DOWN_ARROW')      # the "Lune wears" row (its Favorites button)
+    f = G.focused()
+    check('  the next row down is "Lune wears" with its Favorites button', f is not None and f.cap == 'Favorites',
+          f and (f.cap, f.label))
+    key('C+DOWN_ARROW')      # the Outfit row
     key('C+RIGHT_ARROW')     # '>' button
     f = G.focused()
     check('keyboard focus is painted on the Outfit ">" button', f is not None and f.cap == '>' and 'Outfit · CC' in (f.label or ''),
@@ -342,7 +358,7 @@ def main():
     check('  one-option mod: On / Off instead of < > Choose', G.findBtn('<', 'Herald') is None
           and G.rowValue('Herald') == 'on · worn', G.rowValue('Herald'))
     check('  "Lune wears" says the mod replaces Chic (no layering); the row offers Unwear',
-          'Herald · CC (Wear: in place of Chic)' in screen_text() and G.findBtn('Unwear', 'Herald') is not None,
+          'Herald · CC (in place of Chic)' in screen_text() and G.findBtn('Unwear', 'Herald') is not None,
           screen_text()[:400])
     click('Unwear', 'Herald')
     check('Unwear: back to Chic, and Auto Wear leaves it so', mesh().startswith('/Game/Characters/Lune/')
@@ -497,6 +513,80 @@ def main():
     click('Clear', 'Preset 3')
     check('Clear empties it', G.rowValue('Preset 3') == 'empty')
     check('a disabled Load says why', click('Load', 'Preset 5') and 'Load: this preset is empty' in screen_text())
+
+    # ---- favorites: saved looks per character
+    click('Outfits')
+    click('Lune')
+    check('the "Lune wears" row has Favorites; the bottom row keeps 5 buttons',
+          G.findBtn('Favorites', 'Lune wears') is not None and G.findBtn('Fix look') is not None
+          and len([b for b in G.screen().values() if b.cap in ('Undo', 'All off', 'Randomize', 'Clean: on', 'Clean', 'Fix look', 'Favorites')
+                   and b.label is None]) == 5)
+    click('Favorites', 'Lune wears')
+    check('  it opens Lune\'s favorites, empty at first, with Save look',
+          'Lune favorites' in screen_text() and 'No favorites yet' in screen_text() and G.findBtn('Save look') is not None,
+          screen_text()[:300])
+    click('Back')
+    click('Choose', 'Outfit · CC')
+    click('Sleeveless')
+    click('Back')
+    click('On', 'Herald')
+    click('Favorites', 'Lune wears')
+    click('Save look')
+    f1 = favs()
+    check('Save look stores every pick of Lune\'s slots, one-option mods included (favorites.txt)',
+          len(f1) == 1 and f1[0][0] == 'Lune' and f1[0][2:] == ('CC/Herald', 'CC/H', 'CC/Lune outfit', 'CC/B'), f1)
+    check('  the list shows it, named by what is on, and marks it as on now',
+          len(use_btns()) == 1 and use_btns()[0].label.startswith('1.') and 'Herald' in use_btns()[0].label
+          and 'Sleeveless' in use_btns()[0].label, [b.label for b in use_btns()])
+    click('Save look')
+    check('  saving the same look again says so instead of adding it', len(favs()) == 1
+          and 'already favorite 1' in screen_text(), screen_text()[:200])
+    click('Back')
+    click('Off', 'Herald')
+    click('Choose', 'Outfit · CC')
+    click('Sleeves · boots')
+    click('Back')
+    click('Favorites', 'Lune wears')
+    click('Save look')
+    u = use_btns()
+    check('a second look: two rows, only the second highlighted as on', len(u) == 2 and not G.sameBg(u[0], u[1])
+          and u[1].label.startswith('2.'), [b.label for b in u])
+    click('Use', '1.')
+    check('Use puts the whole look back (Herald on again, Sleeveless)',
+          sel().get('CC/Herald') == 'CC/H' and sel().get('CC/Lune outfit') == 'CC/B', sel())
+    click('Up', '2.')
+    check('Up moves a look up, on screen and in favorites.txt', favs()[0][2:4] == ('CC/Lune outfit', 'CC/A')
+          and use_btns()[0].label.startswith('1.') and 'Sleeves' in use_btns()[0].label, (favs(), [b.label for b in use_btns()]))
+    check('  the first cannot go up, the last cannot go down',
+          not G.findBtn('Up', '1.').enabled and not G.findBtn('Down', '2.').enabled)
+    click('Remove', '1.')
+    check('Remove takes it off the list and out of favorites.txt', len(favs()) == 1 and len(use_btns()) == 1, favs())
+    click('Back')
+    click('Sciel -')
+    click('Favorites', 'Sciel wears')
+    check("another character's list is its own", 'No favorites yet' in screen_text() and not use_btns(), screen_text()[:300])
+    click('Back')
+    click('All')
+    check('  no Favorites on the All tab', G.findBtn('Favorites') is None)
+    click('Lune')
+    with open(os.path.join(mod, 'favorites.txt'), 'a', encoding='utf-8') as f:
+        f.write('Lune\tGone look\tGone/slot\tGone/v\n')
+        for k in range(1, 13):
+            f.write(f'Sciel\tLook {k}\tX/slot{2 * (k % 4) + 1}\tX{2 * (k % 4) + 1}/v{1 + k % 3}\n')
+    click('Settings')
+    click('Reload')
+    check('favorites.txt survives a reload; a look of mods no longer installed is dropped',
+          len(favs()) == 13 and not any(f[1] == 'Gone look' for f in favs()), favs())
+    click('Outfits')
+    click('Sciel -')
+    click('Favorites', 'Sciel wears')
+    check('a long list is paged', len(use_btns()) == 11 and 'Page 1/2' in screen_text(), screen_text()[:300])
+    click('Page >')
+    check('  page 2 shows the rest', len(use_btns()) == 1, [b.label for b in use_btns()])
+    click('Back')
+    click('Lune')
+    click('Off', 'Herald')                       # leave Lune as the later checks expect
+    click('Off', 'Outfit · CC')
 
     # ---- settings
     click('Settings')
@@ -691,6 +781,20 @@ def main():
     site('pressing the first key', p_key)
     site('ticking', lambda: brk(True))
     key('DEL')
+
+    # ---- favorites of a slot that is now split per character ("<id>@<character>") are carried over
+    costume = '''
+  { mod = "Costume", slots = {
+    { id = "K/main", label = "Costume: Main", variants = {
+      { id = "K/a", label = "Main", map = {
+        ["/Game/Characters/Maelle/Body/SK_Maelle_Placeholder"] = { "/Game/Characters/ZWMAEL/Body/SK_Maelle_Placeholder", "SK_Maelle_Placeholder", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/SK_Lune_Placeholder"] = { "/Game/Characters/ZWLIGHT/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder", "SkeletalMesh" } } } } } } },'''
+    v = variants()
+    open(os.path.join(scripts, 'variants.lua'), 'w').write(v[:v.rstrip().rfind('}')] + costume + ' }\n')
+    open(os.path.join(mod, 'favorites.txt'), 'w').write('Lune\tCostume\tK/main\tK/a\nSciel\tCostume\tK/main\tK/a\n')
+    key('C+F8')
+    check('a look saved before a slot was split per character moves to that character\'s slot (others dropped)',
+          favs() == [('Lune', 'Costume', 'K/main@Lune', 'K/a@Lune')], favs())
     shutil.rmtree(tmp)
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

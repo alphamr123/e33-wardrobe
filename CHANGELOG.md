@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0
+
+- **Favorites**: saved looks per character, in your own order (Favorites on the "wears" row; Save look,
+  Use, Up, Down, Remove). Kept in `favorites.txt`.
+- A mod with options for several characters (one costume for Lune, Maelle and Sciel) gets one menu
+  row per character, so each is switched on its own. Old picks carry over.
+- Wear and Auto Wear work for such mods: each character gets their own mesh.
+- A mod material whose texture link is broken no longer shows grey: the empty texture is filled
+  with the mod's own texture of the same name, or the one the body had before.
+- The release Tools zip has only the relocator. The Mod Mixer stays in the repository as an
+  optional, unsupported tool.
+- Relocator: `--save` remembers the Paks folder (and `--library`, `--retoc`) in its own
+  `tools\e33wardrobe_config.json`; the Mixer's settings file is still read if present.
+- Docs: shorter README and install guide; tools download moved to GitHub Releases.
+
 ## 1.0.0 (first public release)
 
 - **Mod Mixer**: a library of pak mods with a browser UI and a command line. Combinations,

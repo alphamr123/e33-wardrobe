@@ -124,61 +124,8 @@ def container_id(utoc):
 
 # ----------------------------------------------------------------------------- config & discovery
 
-def _steam_libraries():
-    roots = []
-    if sys.platform == 'win32':
-        try:
-            import winreg
-            for hive, key in ((winreg.HKEY_CURRENT_USER, r'Software\Valve\Steam'),
-                              (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Valve\Steam')):
-                try:
-                    with winreg.OpenKey(hive, key) as k:
-                        for val in ('SteamPath', 'InstallPath'):
-                            try:
-                                roots.append(winreg.QueryValueEx(k, val)[0])
-                            except OSError:
-                                pass
-                except OSError:
-                    pass
-        except ImportError:
-            pass
-        roots += [r'C:\Program Files (x86)\Steam', r'C:\Program Files\Steam']
-    else:
-        roots += [os.path.expanduser('~/.steam/steam'), os.path.expanduser('~/.local/share/Steam')]
-    libs = []
-    for r in roots:
-        vdf = os.path.join(r, 'steamapps', 'libraryfolders.vdf')
-        libs.append(r)
-        if os.path.isfile(vdf):
-            for m in re.finditer(r'"path"\s+"([^"]+)"', open(vdf, encoding='utf-8', errors='replace').read()):
-                libs.append(m.group(1).replace('\\\\', '\\'))
-    seen, out = set(), []
-    for lib in libs:
-        k = os.path.normcase(os.path.normpath(lib))
-        if k not in seen:
-            seen.add(k)
-            out.append(lib)
-    return out
-
-
-def detect_paks_dir():
-    cands = []
-    for lib in _steam_libraries():
-        acf = os.path.join(lib, 'steamapps', f'appmanifest_{STEAM_APPID}.acf')
-        installdir = 'Expedition 33'
-        if os.path.isfile(acf):
-            m = re.search(r'"installdir"\s+"([^"]+)"', open(acf, encoding='utf-8', errors='replace').read())
-            if m:
-                installdir = m.group(1)
-        cands.append(os.path.join(lib, 'steamapps', 'common', installdir, 'Sandfall', 'Content', 'Paks'))
-    if sys.platform == 'win32':
-        import string
-        for drive in string.ascii_uppercase:
-            cands.append(rf'{drive}:\XboxGames\Clair Obscur- Expedition 33\Content\Sandfall\Content\Paks')
-    for c in cands:
-        if os.path.isfile(os.path.join(c, 'global.utoc')):
-            return c
-    return None
+_steam_libraries = e33common.steam_libraries   # shared with the relocator
+detect_paks_dir = e33common.detect_paks_dir
 
 
 def load_config():

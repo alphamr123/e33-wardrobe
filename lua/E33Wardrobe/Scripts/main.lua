@@ -22,7 +22,7 @@ Nothing is queued to the game thread from another thread (see "threading" below)
 ]]
 
 local MOD = "E33Wardrobe"
-local VERSION = "1.0.0"                         -- the same as tools/e33common.py VERSION
+local VERSION = "1.1.0"                         -- the same as tools/e33common.py VERSION
 local KEYS = {
     menu = { "DEL", {} },
     menuUp = { "UP_ARROW", { "CONTROL" } }, menuDown = { "DOWN_ARROW", { "CONTROL" } },
@@ -57,7 +57,7 @@ do
 end
 local modDir = (scriptDir:gsub("([\\/])[Ss]cripts[\\/]$", "%1"))
 local FILES = { SEL = modDir .. "selection.txt", DUMP = modDir .. "dump.txt", SETTINGS = modDir .. "settings.txt",
-                PRESETS = modDir .. "presets.txt", LIVE = modDir .. "live_log.txt",
+                PRESETS = modDir .. "presets.txt", FAV = modDir .. "favorites.txt", LIVE = modDir .. "live_log.txt",
                 LIVE_PREV = modDir .. "live_log_previous.txt", REPORT = modDir .. "report.txt" }
 
 -- Runtime settings, changed from the menu and kept in settings.txt.
@@ -415,26 +415,26 @@ local function forOutfit(active, meshPath)
     return f
 end
 
+-- Slots tied to no character (one mod for several characters, e.g. a costume with a mesh for
+-- Lune, Maelle and Sciel): which character a mesh belongs to comes from its game path. Filled
+-- in below, once charsIn exists.
+local Wear = {}
+
 -- Mesh to put on a character's body over whatever outfit it wears: the selected variant's
--- skeletal mesh in a "wear" slot tied to that character (the later pick wins).
+-- skeletal mesh in a "wear" slot for that character (the later pick wins). In a slot tied to no
+-- character, only that character's own mesh counts.
 local function forcedFor(char)
     if not char then return nil end
     local f = FORCE_CACHE[char]
     if f ~= nil then return f or nil end
     local wear, best, bestPick = wearSet(), false, -1
     for _, slot in ipairs(SLOTS) do
-        if wear[slot.id] and slot.character == char and (PICK[slot.id] or 0) > bestPick then
+        if wear[slot.id] and (slot.character == char or (not slot.character and Wear.slotChars(slot)[char]))
+           and (PICK[slot.id] or 0) > bestPick then
             local vid = selection[slot.id]
             for _, v in ipairs(slot.variants) do
                 if v.id == vid then
-                    local pick
-                    for orig, e in pairs(v.map) do
-                        if e[3] == "SkeletalMesh" then
-                            local o = orig:lower()
-                            local score = (o:find("/customization/skin/", 1, true) or o:find("_placeholder", 1, true)) and 2 or 1
-                            if not pick or score > pick.score then pick = { pkg = e[1], obj = e[2], score = score, vid = v.id } end
-                        end
-                    end
+                    local pick = Wear.meshFor(v, char, slot.character)
                     if pick then best, bestPick = pick, PICK[slot.id] or 0 end
                 end
             end
@@ -569,6 +569,121 @@ local function onlyChar(text)
     local found, n = charsIn(text)
     if n == 1 then return (next(found)) end
     return nil
+end
+
+-- The variant's body mesh for `char`: in a slot tied to a character any of its skeletal meshes
+-- (an outfit skin or a body base first), else only a mesh whose game path names that character.
+Wear.meshFor = function(v, char, slotChar)
+    local pick
+    for orig, e in pairs(v.map or {}) do
+        if e[3] == "SkeletalMesh" and (slotChar or charsIn(orig)[char]) then
+            local o = orig:lower()
+            local score = (o:find("/customization/skin/", 1, true) or o:find("_placeholder", 1, true)) and 2 or 1
+            if not pick or score > pick.score then
+                pick = { pkg = e[1], obj = e[2], score = score, vid = v.id, orig = orig }
+            end
+        end
+    end
+    return pick
+end
+
+-- Characters whose body meshes a variant brings (from the meshes' game paths).
+Wear.variantChars = function(v)
+    local out = {}
+    for orig, e in pairs(v.map or {}) do
+        if e[3] == "SkeletalMesh" then
+            for c in pairs((charsIn(orig))) do out[c] = true end
+        end
+    end
+    return out
+end
+
+-- The same over all of a slot's variants (kept on the slot; SLOTS is rebuilt on reload).
+-- (Split slots below have a character, so this is only asked of slots tied to nobody.)
+Wear.slotChars = function(slot)
+    if not slot._chars then
+        local out = {}
+        for _, v in ipairs(slot.variants or {}) do
+            for c in pairs(Wear.variantChars(v)) do out[c] = true end
+        end
+        slot._chars = out
+    end
+    return slot._chars
+end
+
+-- A slot tied to nobody whose meshes belong to several characters (one costume with a mesh for
+-- Lune, Maelle and Sciel, or a mod with a Lune and a Sciel option) becomes one slot per character.
+-- Each holds that character's assets plus the ones that name nobody, so each character is
+-- switched on and off on its own. Ids get "@<character>"; Wear.split maps the old id to them.
+Wear.split = {}
+Wear.splitByCharacter = function()
+    Wear.split = {}
+    local out = {}
+    for _, slot in ipairs(SLOTS) do
+        local chars = {}
+        if not slot.character then for c in pairs(Wear.slotChars(slot)) do chars[#chars + 1] = c end end
+        if #chars < 2 then
+            out[#out + 1] = slot
+        else
+            table.sort(chars)
+            local per = {}
+            for _, c in ipairs(chars) do
+                local ns = {}
+                for k, v in pairs(slot) do if k ~= "_chars" then ns[k] = v end end
+                ns.id, ns.character, ns.splitFrom, ns.variants = slot.id .. "@" .. c, c, slot.id, {}
+                for _, v in ipairs(slot.variants or {}) do
+                    -- whose option it is: the character whose body mesh it brings (a Sciel option
+                    -- may also carry textures kept in Lune's folder); without a mesh, any asset
+                    local map, meshFor, anyFor, hasMesh = {}, false, false, false
+                    for orig, e in pairs(v.map or {}) do
+                        local who, n = charsIn(orig)
+                        if n == 0 or who[c] then map[orig] = e end
+                        if e[3] == "SkeletalMesh" then hasMesh = true if who[c] then meshFor = true end end
+                        if who[c] then anyFor = true end
+                    end
+                    local mine = meshFor or (not hasMesh and anyFor)
+                    if mine then
+                        local nv = {}
+                        for k, x in pairs(v) do nv[k] = x end
+                        nv.id, nv.map = v.id .. "@" .. c, map
+                        ns.variants[#ns.variants + 1] = nv
+                    end
+                end
+                if #ns.variants > 0 then out[#out + 1] = ns per[c] = ns end
+            end
+            Wear.split[slot.id] = per
+        end
+    end
+    for k = #SLOTS, 1, -1 do SLOTS[k] = nil end
+    for k, sl in ipairs(out) do SLOTS[k] = sl end
+end
+
+-- Picks and Wear flags saved under a slot that is now split: carried over to each character's slot.
+Wear.migrate = function()
+    local moved = false
+    for old, per in pairs(Wear.split) do
+        local vid = selection[old]
+        if vid then
+            selection[old] = nil
+            moved = true
+            for c, ns in pairs(per) do
+                for _, v in ipairs(ns.variants) do
+                    if v.id == vid .. "@" .. c then selection[ns.id] = v.id PICK[ns.id] = PICK[old] end
+                end
+            end
+        end
+    end
+    local ids, wmoved = {}, false
+    for id in (SETTINGS.wear or ""):gmatch("[^|]+") do
+        if Wear.split[id] then
+            wmoved = true
+            for _, ns in pairs(Wear.split[id]) do ids[#ids + 1] = ns.id end
+        else
+            ids[#ids + 1] = id
+        end
+    end
+    if wmoved then table.sort(ids) SETTINGS.wear = table.concat(ids, "|") saveSettings() end
+    return moved
 end
 
 -- Slots without a character get one from their own name, then the mod's name, then (when one
@@ -835,6 +950,64 @@ local function chooseMaterial(active, base, meshDefault, oldDefault, meshChanged
     if mode == "orig" then return loadObj(p, o) or meshDefault end
     if mode == "default" then return meshDefault end    -- mod-only material of an unselected variant
     return nil
+end
+
+-- Empty texture slots. Some mods' materials point at a texture that isn't where they look for it
+-- (PC: Cheeki's body material, Color_MAIN empty, so the body showed grey, while the mod ships
+-- Lune_Body_Basecolor-nude and nothing uses it). Before a body mesh is changed, the textures its
+-- materials show are noted per character. Afterwards an empty texture parameter gets, in order:
+-- an unused texture of the picked variants named like the one it had ("Lune_Body_Basecolor" ->
+-- "Lune_Body_Basecolor-nude"), else the texture it had under that name.
+Wear.donor = {}                 -- character -> parameter name -> texture last seen on the body
+Wear.noteTextures = function(comp, char)
+    if not char then return end
+    local d = Wear.donor[char] or {}
+    Wear.donor[char] = d
+    local ok, n = pcall(function() return comp:GetNumMaterials() end)
+    for i = 0, (ok and n or 0) - 1 do
+        local okm, m = pcall(function() return comp:GetMaterial(i) end)
+        if okm and valid(m) then
+            for key, tp in pairs(textureParams(m)) do
+                if valid(tp.tex) then d[key:match("^[^|]*")] = tp.tex end
+            end
+        end
+    end
+end
+local function namedLike(active, before)
+    local stem = (leafName(before) or ""):lower()
+    if #stem < 4 then return nil end
+    local best
+    for orig, e in pairs(active or {}) do
+        if e.class == "Texture2D" then
+            local leaf = orig:match("[^/]+$") or ""     -- keys are lower-case original paths
+            if leaf ~= stem and leaf:sub(1, #stem) == stem and (not best or #leaf < #best.leaf) then
+                best = { leaf = leaf, pkg = e.pkg, obj = e.obj }
+            end
+        end
+    end
+    return best and loadObj(best.pkg, best.obj) or nil
+end
+Wear.fillEmpty = function(actor, comp, char, n, active)
+    local d = char and Wear.donor[char]
+    if not d then return end
+    for i = 0, (n or 0) - 1 do
+        local okm, m = pcall(function() return comp:GetMaterial(i) end)
+        if okm and valid(m) then
+            local mid
+            for key, tp in pairs(textureParams(m)) do
+                local name = key:match("^[^|]*")
+                if not valid(tp.tex) and valid(d[name]) then      -- an empty link reads as an invalid object
+                    local own = namedLike(active, d[name])
+                    local tex = own or d[name]
+                    mid = mid or (isMID(m) and m or makeMID(actor, comp, i, m, nil))
+                    if not mid then break end
+                    setTexture(mid, tp.info, tex)
+                    change("mat%d texture %s: empty (the mod's material points at a texture it doesn't have) -> %s%s",
+                        i, name, pkgPath(tex) or "?", own and " (the mod's own, named like it)" or " (what the body showed before)")
+                end
+            end
+        end
+    end
 end
 
 local function fixSlot(actor, active, comp, i, meshDefault, oldDefault, meshChanged)
@@ -1152,6 +1325,9 @@ local function applyToActor(actor, doneComps)
         end
         local meshChanged = false
         local oldDefaults = {}
+        if newMesh and kind and char and kind == "skel" and WEAR_COMPS[e.name] then
+            pcall(Wear.noteTextures, comp, char)        -- what the body shows before its mesh changes
+        end
         if newMesh and kind then
             change("mesh %s -> %s (%s)", mesh and pkgPath(mesh) or "none", pkgPath(newMesh) or "?", why or "?")
             oldDefaults = mesh and meshDefaults(mesh) or {}
@@ -1191,6 +1367,7 @@ local function applyToActor(actor, doneComps)
                 if not okf then log("slot %d of %s: %s", i, e.name, tostring(err)) end
             end
         end
+        if ok and n and char and kind == "skel" and WEAR_COMPS[e.name] then pcall(Wear.fillEmpty, actor, comp, char, n, compActive) end
         if SETTINGS.clean and Clean.comp then pcall(Clean.comp, comp, actor) end
         -- what this character wears now (for the menu): the body mesh after this pass
         if char and kind == "skel" and WEAR_COMPS[e.name] and mesh then
@@ -1755,9 +1932,13 @@ local function outfitName(path)
 end
 
 -- The outfit a slot's selected (or first) variant replaces: its skeletal mesh's original path.
-local function targetOutfit(slot)
+local function targetOutfit(slot, char)
     local v = selectedVariant(slot) or (slot.variants or {})[1]
     if not v then return nil end
+    if char and not slot.character and next(Wear.slotChars(slot)) then
+        local pick = Wear.meshFor(v, char, nil)
+        return pick and pick.orig or nil       -- this variant has no mesh for that character
+    end
     for orig, e in pairs(v.map or {}) do
         if e[3] == "SkeletalMesh" then return orig end
     end
@@ -1835,18 +2016,30 @@ local function autoWear()
     for i, slot in ipairs(SLOTS) do
         if AUTOWEAR_PENDING[slot.id] then
             local v = selectedVariant(slot)
-            if not v or wear[slot.id] or not slot.character or not hasMesh(slot) then
+            -- the characters it is for: the slot's own, else whoever its meshes belong to
+            local chars = v and (slot.character and { [slot.character] = true } or Wear.variantChars(v))
+            if not v or wear[slot.id] or not hasMesh(slot) or not next(chars) then
                 AUTOWEAR_PENDING[slot.id] = nil
-            elseif WORN[slot.character] then
-                AUTOWEAR_PENDING[slot.id] = nil
-                local shown = false
-                for orig, e in pairs(v.map or {}) do
-                    if e[3] == "SkeletalMesh" and appliedBy(orig:lower(), v.id) then shown = true end
+            else
+                local loaded, misfit = false, nil
+                for c in pairs(chars) do
+                    if WORN[c] then
+                        loaded = true
+                        local shown = false
+                        for orig, e in pairs(v.map or {}) do
+                            if e[3] == "SkeletalMesh" and (slot.character or charsIn(orig)[c])
+                               and appliedBy(orig:lower(), v.id) then shown = true end
+                        end
+                        if not shown then misfit = c end
+                    end
                 end
-                if not shown then
-                    AUTO_WORN[slot.id] = true
-                    live("Auto Wear: %s doesn't fit what %s wears; worn in place of it", slot.label, slot.character)
-                    setWearFlag(slot.id, true, "Auto Wear")
+                if loaded then
+                    AUTOWEAR_PENDING[slot.id] = nil
+                    if misfit then
+                        AUTO_WORN[slot.id] = true
+                        live("Auto Wear: %s doesn't fit what %s wears; worn in place of it", slot.label, misfit)
+                        setWearFlag(slot.id, true, "Auto Wear")
+                    end
                 end
             end
         end
@@ -1985,6 +2178,70 @@ local function savePresets(p)
     f:close()
 end
 
+-- Favorites: saved looks per character, in the player's order. A look is every pick of that
+-- character's slots at the time it was saved (one-option mods included; a slot not in the look is
+-- off). favorites.txt: one look per line, tab-separated: character, name, then slot id / variant id
+-- pairs. The menu edits Fav.list and calls Fav.save.
+local Fav = { list = {} }
+Fav.save = function()
+    local f = io.open(FILES.FAV, "w")
+    if not f then log("cannot write %s", FILES.FAV) return end
+    for _, e in ipairs(Fav.list) do
+        local parts = { e.char, e.name }
+        local ids = {}
+        for id in pairs(e.picks) do ids[#ids + 1] = id end
+        table.sort(ids)
+        for _, id in ipairs(ids) do parts[#parts + 1] = id parts[#parts + 1] = e.picks[id] end
+        f:write(table.concat(parts, "\t"), "\n")
+    end
+    f:close()
+end
+-- Picks of slots / variants no longer in the wardrobe are dropped (a look left with none of its
+-- picks goes); picks saved before a slot was split per character ("<id>@<character>") carry over.
+Fav.load = function()
+    Fav.list = {}
+    local f = io.open(FILES.FAV, "r")
+    if not f then return end
+    local raw = {}
+    for line in f:lines() do
+        local t = {}
+        for x in (line:gsub("\r$", "") .. "\t"):gmatch("(.-)\t") do t[#t + 1] = x end
+        if #t >= 2 and t[1] ~= "" then
+            local e = { char = t[1], name = t[2], picks = {}, n = 0 }
+            for k = 3, #t - 1, 2 do
+                if t[k] ~= "" and t[k + 1] ~= "" then e.picks[t[k]] = t[k + 1] e.n = e.n + 1 end
+            end
+            raw[#raw + 1] = e
+        end
+    end
+    f:close()
+    if #SLOTS == 0 then Fav.list = raw return end
+    local known, changed = {}, false
+    for _, slot in ipairs(SLOTS) do
+        known[slot.id] = {}
+        for _, v in ipairs(slot.variants) do known[slot.id][v.id] = true end
+    end
+    for _, e in ipairs(raw) do
+        local picks, kept = {}, 0
+        for id, vid in pairs(e.picks) do
+            if not (known[id] and known[id][vid]) then
+                changed = true
+                id, vid = id .. "@" .. e.char, vid .. "@" .. e.char
+            end
+            if known[id] and known[id][vid] then picks[id] = vid kept = kept + 1 end
+        end
+        if kept > 0 or e.n == 0 then
+            Fav.list[#Fav.list + 1] = { char = e.char, name = e.name, picks = picks }
+        else
+            changed = true
+        end
+    end
+    if changed then
+        Fav.save()
+        log("favorites.txt: updated for the current wardrobe (%d look(s) kept)", #Fav.list)
+    end
+end
+
 local function listAll()
     for i in ipairs(SLOTS) do
         log(describe(i))
@@ -1996,13 +2253,15 @@ local function reload()
     FAILED = {}
     loadVariants()
     inferCharacters()
+    Wear.splitByCharacter()
     -- Wear on a slot that can't wear (no mesh) does nothing: drop such stale flags
     do
         local keep, dropped, byId = {}, false, {}
         for _, slot in ipairs(SLOTS) do byId[slot.id] = slot end
         for id in (SETTINGS.wear or ""):gmatch("[^|]+") do
             local slot = byId[id]
-            if slot and not (slot.character and hasMesh(slot)) then dropped = true else keep[#keep + 1] = id end
+            local canWear = slot and hasMesh(slot) and (slot.character or next(Wear.slotChars(slot)))
+            if slot and not canWear then dropped = true else keep[#keep + 1] = id end
         end
         if dropped then
             SETTINGS.wear = table.concat(keep, "|")
@@ -2011,6 +2270,8 @@ local function reload()
         end
     end
     loadSelection()
+    if Wear.migrate() then saveSelection() end
+    Fav.load()
     if #SLOTS > 0 then                          -- picks of slots / variants no longer in the wardrobe
         local known, dropped = {}, 0
         for _, slot in ipairs(SLOTS) do
@@ -2507,6 +2768,7 @@ local API = {
     canUndo = function() return #HISTORY > 0 end,
     applyAll = applyAll, reload = reload, dump = dump,
     loadPresets = loadPresets, savePresets = savePresets,
+    favorites = function() return Fav.list end, saveFavorites = Fav.save,
     rebuildActive = rebuildActive,
     countSkins = function()                         -- full object scan: only on a button press
         local n = 0
@@ -2520,9 +2782,10 @@ local API = {
     post = post, later = later,                 -- post: any thread -> game-thread loop
     flushPending = function() if gtDepth > 0 then runCallbackEnd() end end,   -- menu: apply, then draw
     isWear = function(id) return wearSet()[id] == true end,
-    canWear = function(slot) return slot.character ~= nil and hasMesh(slot) end,
+    canWear = function(slot) return hasMesh(slot) and (slot.character ~= nil or next(Wear.slotChars(slot)) ~= nil) end,
+    slotChars = function(slot) return Wear.slotChars(slot) end,
     isTechnical = isTechnical, outfitName = outfitName,
-    targetOutfit = function(slot) return targetOutfit(slot) end,
+    targetOutfit = function(slot, char) return targetOutfit(slot, char) end,
     wornBy = function(char) return WORN[char] end,
     loadedChars = function()
         local out = {}

@@ -16,7 +16,7 @@ labels: bug
 - E33 Wardrobe version:
 - UE4SS version:
 - Steam or Game Pass:
-- Mods relocated or installed with the Mixer:
+- Mods relocated:
 
 **report.txt**
 

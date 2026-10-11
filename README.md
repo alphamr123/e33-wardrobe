@@ -1,106 +1,78 @@
 # E33 Wardrobe
 
-Switch outfit mods for **Clair Obscur: Expedition 33** without restarting the game, or install
-mod combinations from your browser with one click.
+An in-game outfit menu for **Clair Obscur: Expedition 33**. Pick outfit-mod variants per
+character and see them right away, without restarting the game.
 
-Most E33 outfit mods are *replacers*: each variant overwrites the same game files, so you can only
-have one installed, and switching means moving files around with the game closed. E33 Wardrobe
-gives you three tools for that:
+Most outfit mods replace game files, so only one variant can be installed at a time. E33 Wardrobe
+repacks each variant so they can all be installed together, and the menu switches between them
+while you play.
 
-| Part | What it does | Needs |
-|---|---|---|
-| **In-game menu** (UE4SS Lua mod) | Press **Delete** in game: pick outfit-mod variants per character and see them right away. Also **Clean** (blood and dirt off), **Fix look**, presets, Undo, Randomize. | UE4SS |
-| **Relocator** | Repacks every variant of a mod to its own asset paths, so all of them can be installed at once. The in-game menu then switches between them live. | Python 3.8+, retoc |
-| **Mod Mixer** | A library of your mods and a page in your browser: choose a combination, press Apply, start the game. Knows multi-variant mod layouts, warns about conflicts. | Python 3.8+ |
+## What's included
 
-**Status: 1.0.0, beta.** Tested on the Steam version with UE4SS 3.0.1-1125-g527a483b and
-retoc 0.1.5, over many sessions on one PC. Game Pass is detected but untested.
+- **In-game menu** (UE4SS mod). Press **Delete**.
+  - One tab per character; pick, step through or turn off each mod.
+  - **Auto Wear:** a mod made for another outfit is put on in place of the current one.
+  - **Favorites:** save looks per character and order them.
+  - **Clean:** removes blood and dirt from all characters. No files changed.
+  - **Fix look**, presets, undo, randomize.
+- **Relocator** (Python): prepares outfit mods for the menu. Drag a mod folder onto
+  `E33 Relocate.bat`.
 
-## Quick start
+## Install
 
-1. **Install UE4SS**: Nexus Mods, E33 UE4SS page (mod 630), file "UE4SS - Experimental (Newer)".
-   An experimental build from December 2025 or later is required.
-2. **Install the E33Wardrobe UE4SS mod** with Vortex, or extract it into
-   `...\Sandfall\Binaries\Win64\ue4ss\Mods\` so that `...\Mods\E33Wardrobe\Scripts\main.lua`
-   exists. Load a save and press **Delete**: Clean and Fix look work already.
-3. **For live outfit switching**, extract the tools anywhere outside the game folder, install
-   [Python](https://www.python.org/downloads/) and put
-   [retoc](https://github.com/trumank/retoc/releases) `retoc.exe` into `tools\`. Put each outfit
-   mod, unchanged, into its own folder in the library (`...\Sandfall\Content\Paks_ModLibrary\`),
-   remove its files from `~mods`, and drag its folder onto **`tools\E33 Relocate.bat`**.
-   In game, its variants appear in the menu.
-4. **Or use the Mixer**: double-click **`tools\E33 Mod Mixer.bat`**, choose options, close the
-   game, press **Apply to game**.
+Short version:
 
-Step by step: [docs/INSTALL.md](docs/INSTALL.md).
+1. Install [UE4SS](https://www.nexusmods.com/clairobscurexpedition33/mods/630), file
+   "UE4SS - Experimental (Newer)".
+2. Install the menu (Vortex, or extract into `...\Binaries\Win64\ue4ss\Mods\`).
+3. For outfit switching: get the tools zip from
+   [Releases](https://github.com/alphamr123/e33-wardrobe/releases), install Python and put
+   [retoc](https://github.com/trumank/retoc/releases) in `tools\`. Put each outfit mod in its own
+   folder in `Sandfall\Content\Paks_ModLibrary\` and drag that folder onto `E33 Relocate.bat`.
 
-## In game
+Full steps: [docs/INSTALL.md](docs/INSTALL.md).
+
+## Keys
 
 | Key | Action |
 |---|---|
-| Delete | Open / close the menu (the mouse works in it) |
-| Ctrl+arrows, Ctrl+Enter | Move through the menu and press buttons with the keyboard |
-| Ctrl+PageUp / PageDown | Previous / next page |
-| Ctrl+F7 / F8 / F9 | Apply again / reload the wardrobe / write a report |
+| Delete | Open / close the menu |
+| Ctrl + arrows, Ctrl + Enter | Use the menu with the keyboard |
+| Ctrl + F9 | Write `report.txt` (attach it to bug reports) |
 
-- One tab per character. Each row is a slot (an outfit, a colour, a part); step through its
-  variants or choose one by name. **Off** puts the game's own back.
-- An outfit mod only shows on the outfit it was made for. **Auto Wear** puts it on in place of the
-  current outfit for you, and **Unwear** brings the original back.
-- **Clean** takes blood and dirt off every character, in battles and cutscenes too, until you
-  switch it off. It changes no files.
-- The status line says what each pick did, or why nothing changed.
-
-All of it: [docs/USAGE.md](docs/USAGE.md). To change keys, copy `Scripts\config.example.lua` to `config.lua` and edit it.
-
-## How it works
-
-The relocator (Python + [retoc](https://github.com/trumank/retoc)) unpacks each variant, moves
-every asset path to a unique path of the **same length** (so the cooked packages stay valid
-without re-serialising them), and packs it again. Nothing it installs replaces a game file. The
-UE4SS Lua mod hooks the game's character-skin system and, while you play, swaps meshes,
-materials and textures on the character actors to the variant you picked; switching a slot off
-restores the game's own. Clean blanks the game's blood and dirt mask textures at runtime with a
-tiny all-zero render target, the same effect the Nexus "clean" mods get by replacing those
-textures.
-
-Details: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md). The research behind it, with evidence and
-references (UE4SS source and issues, the game's type mappings, studied mods):
-[docs/RESEARCH.md](docs/RESEARCH.md).
+To change keys, copy `Scripts\config.example.lua` to `config.lua` and edit it.
 
 ## Documentation
 
-| | |
-|---|---|
-| [INSTALL.md](docs/INSTALL.md) | Requirements, installing, updating, uninstalling, what goes where |
-| [USAGE.md](docs/USAGE.md) | The in-game menu, settings, console commands, limits |
-| [RELOCATOR.md](docs/RELOCATOR.md) | Preparing mods for live switching; options; removing a mod |
-| [MIXER.md](docs/MIXER.md) | The Mod Mixer, presets, conflicts, previews, rules files |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common problems, report.txt, freezes, reporting a bug |
-| [HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | Design: relocation, runtime swapping, Clean, threading |
-| [RESEARCH.md](docs/RESEARCH.md) | Findings, evidence and references |
-| [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Repository layout, tests, code rules, releases |
+- [INSTALL.md](docs/INSTALL.md): installing, updating, uninstalling
+- [USAGE.md](docs/USAGE.md): the menu in detail, settings, console commands
+- [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): common problems, freezes, reporting a bug
+- [RELOCATOR.md](docs/RELOCATOR.md): the relocator and its options
+- [HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) and [RESEARCH.md](docs/RESEARCH.md): design and
+  research notes, with references
+- [DEVELOPMENT.md](docs/DEVELOPMENT.md): code layout and tests
 
-## Known limits
+## Limits
 
-- An outfit mod replaces the whole body mesh, so two outfit mods never layer on one character.
-- The relocator handles IoStore mods (with `.utoc` / `.ucas` files), which most E33 outfit mods
-  are; pak-only mods can be installed with the Mixer. LogicMods and UE4SS parts of a mod are
-  installed by hand.
-- Textures a mod's *base* material uses directly can't be swapped at runtime (`dump.txt` shows
-  whether that matters for a mod).
-- While Clean is on, faces also lose sweat and tears (the game draws them through the same masks).
+- Two outfit mods can't be worn on the same character at once; each replaces the body mesh.
+- The relocator needs mods with `.utoc` files (most outfit mods). Pak-only mods go into
+  `~mods` as usual.
+- While Clean is on, faces also lose sweat and tears.
 
 ## Other people's mods
 
-The tools work on your local copies of mods you downloaded. Relocated paks contain those authors'
-work: **don't share relocated paks or presets with their files** without the authors' permission,
-and follow each mod's own permissions.
+The tools only change your local copies. Relocated files contain other authors' work: please
+don't share them, and follow each mod's permissions.
+
+## Mod Mixer (optional)
+
+The repository also has an older tool, the Mod Mixer (`tools/e33_mixer.py`), which installs one
+combination of mods from a browser page. It isn't part of the release and isn't supported; see
+[MIXER.md](docs/MIXER.md) if you want to run it from a clone.
 
 ## Contributing
 
-Bug reports, rules files for more mods and code are welcome: [CONTRIBUTING.md](CONTRIBUTING.md).
-For a bug, attach `report.txt` (Settings > **Report** in the menu).
+Bug reports and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Tests:
 
 ```
 pip install -r requirements-dev.txt
@@ -109,12 +81,12 @@ python tests/run_suites.py
 
 ## Credits and licence
 
-MIT licence ([LICENSE](LICENSE)). Parts of `tools/e33tex.py` follow CUE4Parse (Apache-2.0) and use
-bcdec's tables; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for these and for the
-projects and mods this work learned from: RE-UE4SS, retoc, FModel, E33 Randomizer, UAssetAPI, Loud
-and Clear, and the Nexus blood and dirt mods by DC, Imtheonlydot and notrustk.
+MIT licence ([LICENSE](LICENSE)). Third-party code and the projects this builds on are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): RE-UE4SS, retoc, CUE4Parse, bcdec, FModel,
+E33 Randomizer, UAssetAPI, Loud and Clear, and the blood and dirt mods by DC, Imtheonlydot and
+notrustk.
 
-This project was written with an AI coding assistant (Claude) and tested in the game by a person.
+Written with the help of an AI coding assistant (Claude); tested in game by the author.
 
 Clair Obscur: Expedition 33 belongs to Sandfall Interactive and Kepler Interactive. This project
-is not affiliated with them and ships no game files.
+is not affiliated with them and includes no game files.

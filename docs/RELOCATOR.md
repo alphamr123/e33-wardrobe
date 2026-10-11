@@ -24,8 +24,8 @@ How it works inside: [HOW_IT_WORKS.md](HOW_IT_WORKS.md#relocation).
 - Install UE4SS and put `retoc.exe` next to `e33_relocate.py` ([INSTALL.md](INSTALL.md)).
 - Keep the mod unchanged in its own folder in the library.
 - **Close the game.**
-- If you also use the Mixer, **switch this mod off there**. A mod must not be installed as a
-  replacer and as relocated variants at the same time.
+- If the mod is also installed in `~mods` (by hand or with Vortex), remove it there. A mod must not
+  be installed as a replacer and as relocated variants at the same time.
 
 ## Running it
 
@@ -38,8 +38,8 @@ py tools\e33_relocate.py --mod "<library>\<mod folder>"
 ```
 
 `--mod` also takes just the folder name of a mod in the library (`--mod "Some Mod"`): the
-Mixer's library setting, or `Paks_ModLibrary` next to `Paks`. The game's
-`Paks` folder comes from the Mixer's setting or is found automatically (Steam, and the default
+saved library, or `Paks_ModLibrary` next to `Paks`. The game's
+`Paks` folder comes from the saved setting (`--paks ... --save`) or is found automatically (Steam, and the default
 Game Pass folder, where the UE4SS mod is then looked for under `Binaries\WinGDK`); otherwise add
 `--paks "<game>\Sandfall\Content\Paks"`.
 
@@ -93,12 +93,14 @@ longer exist in the mod are removed on a full run.
 
 | Option | Meaning |
 |---|---|
-| `--paks DIR` | The game's `Sandfall\Content\Paks` folder. Default: the Mixer's setting, or found automatically |
-| `--mod DIR` | A mod folder, or the name of a folder in the library (the Mixer's setting, or `Paks_ModLibrary` next to `Paks`) (repeatable) |
+| `--paks DIR` | The game's `Sandfall\Content\Paks` folder. Default: the saved setting, or found automatically |
+| `--library DIR` | The mod library, for `--mod` with just a name. Default: the saved setting, or `Paks_ModLibrary` next to `Paks` |
+| `--save` | Remember `--paks`, `--library` and `--retoc` for later runs (in `tools\e33wardrobe_config.json`) |
+| `--mod DIR` | A mod folder, or the name of a folder in the library (see `--library`) (repeatable) |
 | `--remove NAME` | Take a relocated mod out of the wardrobe (repeatable) |
 | `--version` | Print the version |
 | `--only REGEX` | Only re-do the option folders whose path matches. The shared pak is still rebuilt from all of the mod's paks. |
-| `--retoc PATH` | Where `retoc.exe` is, if it isn't next to the tools, in the Mixer's setting or on `PATH` |
+| `--retoc PATH` | Where `retoc.exe` is, if it isn't next to the tools, in the saved setting or on `PATH` |
 | `--lua-dir DIR` | The `ue4ss\Mods\E33Wardrobe` folder. By default it's derived from `--paks`: `Sandfall\Binaries\Win64\ue4ss\Mods\E33Wardrobe`, or `Binaries\WinGDK\...` when the game has a `Binaries\WinGDK` folder and no `Binaries\Win64` (Game Pass). Use this for another UE4SS layout. |
 | `--out DIR` | Where to write the relocated paks (default `Paks\~mods\_E33Wardrobe`) |
 | `--work DIR` | Parent folder for the temporary work folder. It must be on the same drive as the game. |
@@ -124,7 +126,7 @@ Replacer mods often ship a copy of a game skeleton or physics asset.
 
 The relocator stops a variant and explains why, instead of producing a broken pak, when:
 
-- the folder has no `.utoc` (a pak-only mod; install it with the Mixer instead);
+- the folder has no `.utoc` (a pak-only mod; install it in `~mods` as usual);
 - a pak is encrypted;
 - a pak was built for a different Unreal version;
 - its container lists no `/Game` packages, or the real path of a package can't be found;
@@ -143,8 +145,8 @@ them instead; use it to check whether a pak the mod page asks for is missing.
 
 ## Limits
 
-- Mods packed only as a legacy `.pak` (no `.utoc` / `.ucas`) can't be relocated yet. The Mixer
-  handles them.
+- Mods packed only as a legacy `.pak` (no `.utoc` / `.ucas`) can't be relocated yet; install
+  them in `~mods` as usual.
 - Only `~mods` paks are relocated. LogicMods or UE4SS parts of a mod are installed by hand.
 - Textures that a mod's *base* material uses directly (not as a material parameter) can't be
   swapped at runtime ([USAGE.md](USAGE.md#limitations)).

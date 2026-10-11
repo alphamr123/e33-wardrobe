@@ -22,8 +22,9 @@ sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import e33common  # noqa: E402
 
 LUA_SRC = os.path.join(ROOT, 'lua', 'E33Wardrobe')
-TOOL_FILES = ['E33 Mod Mixer.bat', 'E33 Relocate.bat', 'e33_mixer.py', 'e33_mixer_ui.html', 'e33_relocate.py',
-              'e33common.py', 'e33legacy.py', 'e33previews.py', 'e33rules.py', 'e33tex.py', 'e33utoc.py']
+TOOL_FILES = ['E33 Relocate.bat', 'e33_relocate.py', 'e33common.py', 'e33legacy.py', 'e33rules.py', 'e33utoc.py']
+# The Mod Mixer (e33_mixer*, e33previews, e33tex, its .bat) stays in the repository only: optional, not
+# part of the release.
 LUA_SCRIPTS = ['main.lua', 'menu.lua', 'config.example.lua']   # never config.lua: an update must not replace the user's
 TOP_FILES = ['README.md', 'LICENSE', 'CHANGELOG.md', 'CONTRIBUTING.md', 'research/usmap.py']
 # the notice for a rules file is only packed together with that file
@@ -40,13 +41,14 @@ Install: with Vortex, or extract into ...\\Sandfall\\Binaries\\Win64\\ue4ss\\Mod
 
 In game: load a save and press Delete for the menu. Clean (blood and dirt) and Fix look work
 right away; switching outfit-mod variants live needs mods prepared with the relocator from the
-Tools file.
+Tools download: https://github.com/alphamr123/e33-wardrobe/releases
 
 Keys: copy Scripts\\config.example.lua to config.lua and edit it (updates never replace
 config.lua). Problems: send report.txt from this folder (Settings > Report
 in the menu).
 
-Documentation, source and issues: see the mod page. Licence: MIT.
+Documentation, source and issues: https://github.com/alphamr123/e33-wardrobe
+Licence: MIT.
 """
 
 

@@ -8,7 +8,7 @@ Open an issue (or post in the Bugs tab on Nexus Mods) with:
 
 - what you did and what you expected;
 - your UE4SS version, and whether you play on Steam or Game Pass;
-- the mods you relocated or installed with the Mixer;
+- the mods you relocated;
 - `ue4ss\Mods\E33Wardrobe\report.txt`. It is written at every game start while Settings > Record session
   is on (the default), and on demand with Settings > Report, Ctrl+F9 or the console command `wardrobe report`.
   User names in paths are replaced by `<user>`, but it still lists your mods and folders: look

@@ -1,5 +1,10 @@
 # Mod Mixer
 
+> **Optional, not supported.** The Mixer isn't part of the release download. It stays in the
+> repository for people who prefer installing one combination of mods with the game closed. Run it
+> from a clone: `py tools\e33_mixer.py gui` (or `tools\E33 Mod Mixer.bat`). For switching outfits
+> in game, use the relocator ([RELOCATOR.md](RELOCATOR.md)).
+
 The Mixer keeps every outfit mod in a library folder and installs exactly the paks of the
 combination you choose. Changes apply the next time the game starts (paks are loaded at launch).
 It doesn't need UE4SS. Set it up first: [INSTALL.md](INSTALL.md).
@@ -73,7 +78,7 @@ combination (or the closest one) is selected, as a thumbnail on the option butto
 
 **Make color swatches** builds a small swatch for every option without starting the game. It
 extracts each option's base-colour texture from its pak with retoc (see
-[INSTALL.md](INSTALL.md#4-retoc)) and decodes it. This works for colour variants; options that only
+[INSTALL.md](INSTALL.md#2-the-tools)) and decodes it. This works for colour variants; options that only
 change shape (sleeves, shoes) have no texture of their own, so use screenshots for those. From the
 command line, `swatches` only rebuilds options whose pak changed (`--force` rebuilds all); the
 page's **Update color swatches** button rebuilds all of them.

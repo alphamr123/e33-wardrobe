@@ -33,7 +33,7 @@ local ticks = 0
 
 local st = { view = "outfits", filter = nil, page = 1, pick = nil, pickPage = 1,
              row = 2, col = 1, msg = "", rows = {}, A = nil, B = nil, showing = nil, slide = nil,
-             kbd = false, flash = nil, peekUntil = nil }
+             kbd = false, flash = nil, peekUntil = nil, favChar = nil, favPage = 1 }
 
 local NROWS, NBTN = 14, 6
 local WIDTH, ROW_H = 660, 30
@@ -109,26 +109,44 @@ end
 
 local function visible(slot) return S.show_technical or not (W.isTechnical and W.isTechnical(slot)) end
 
+-- The characters a slot changes: its own, else those its meshes belong to (a costume for Lune,
+-- Maelle and Sciel). An empty set: it isn't tied to anyone (applies to everybody).
+local function slotChars(s)
+    if s.character then return { [s.character] = true } end
+    return (W.slotChars and W.slotChars(s)) or {}
+end
+
 local function characters()
     local seen, out = {}, {}
     for _, s in ipairs(W.slots()) do
-        if s.character and not seen[s.character] and visible(s) then
-            seen[s.character] = true
-            out[#out + 1] = s.character
+        if visible(s) then
+            for c in pairs(slotChars(s)) do
+                if not seen[c] then seen[c] = true out[#out + 1] = c end
+            end
         end
     end
     table.sort(out)
     return out
 end
 
--- Slots shown under the character filter: that character's slots plus the unscoped ones
--- (they apply to everybody, so they also change the filtered character).
+-- Slots shown under the character filter: the ones that change that character, plus the ones
+-- tied to nobody (they apply to everybody).
 local function shownSlots()
     local out = {}
     for i, s in ipairs(W.slots()) do
-        if visible(s) and (not st.filter or not s.character or s.character == st.filter) then out[#out + 1] = i end
+        local cs = slotChars(s)
+        if visible(s) and (not st.filter or not next(cs) or cs[st.filter]) then out[#out + 1] = i end
     end
     return out
+end
+
+-- The character a slot's messages are about: its own, else the open tab's, else the first
+-- character it changes.
+local function charOf(slot)
+    if slot.character then return slot.character end
+    local cs = slotChars(slot)
+    if st.filter and (cs[st.filter] or not next(cs)) then return st.filter end
+    return (next(cs))
 end
 
 -- Labels from the relocator carry their context ("Some Outfit V2: Lune color",
@@ -249,11 +267,11 @@ end
 
 -- Why a selected variant shows nothing, in words.
 local function whyUnused(slot)
-    local char = slot.character or st.filter or (W.loadedChars and W.loadedChars()[1])
+    local char = charOf(slot) or (W.loadedChars and W.loadedChars()[1])
     local worn, under = wornName(char)
     if not char then return "no character is loaded here" end
     if not worn then return char .. " isn't loaded here" end
-    local target = W.targetOutfit(slot)
+    local target = W.targetOutfit(slot, char)
     if target then
         local made = W.outfitName(target)
         if made == (under or worn) then
@@ -467,6 +485,83 @@ local function slideToggle(si)
     else
         st.slide = { si = si, at = os.time() + math.max(1, S.slideshow_s or 4) }
         say("slideshow every %d s (runs while the menu is closed too; Stop it here)", S.slideshow_s or 4)
+    end
+end
+
+-- Favorites: W.favorites() is the list of saved looks { char, name, picks = { slot id = variant id } }
+-- in the player's order. A look covers the slots tied to that character.
+local function charSlots(char)
+    local out = {}
+    for si, slot in ipairs(W.slots()) do if slot.character == char then out[#out + 1] = si end end
+    return out
+end
+
+local function currentLook(char)
+    local picks, names = {}, {}
+    for _, si in ipairs(charSlots(char)) do
+        local slot = W.slots()[si]
+        local vi = W.variantIndex(slot)
+        if vi > 0 then
+            picks[slot.id] = slot.variants[vi].id
+            if visible(slot) then
+                names[#names + 1] = #slot.variants > 1 and (slotDisplay(slot, false) .. " " .. variantShort(slot, vi))
+                    or slotDisplay(slot, false)
+            end
+        end
+    end
+    return picks, #names > 0 and table.concat(names, " + ") or "Game's own outfit"
+end
+
+local function sameLook(a, b)
+    for id, vid in pairs(a) do if b[id] ~= vid then return false end end
+    for id, vid in pairs(b) do if a[id] ~= vid then return false end end
+    return true
+end
+
+local function lookIndex(char, picks)
+    local n = 0
+    for k, e in ipairs(W.favorites()) do
+        if e.char == char then
+            n = n + 1
+            if sameLook(e.picks, picks) then return k, n end
+        end
+    end
+end
+
+local function saveLook(char)
+    local picks, name = currentLook(char)
+    local _, n = lookIndex(char, picks)
+    if n then say("this look is already favorite %d", n) return end
+    local list = W.favorites()
+    list[#list + 1] = { char = char, name = name, picks = picks }
+    W.saveFavorites()
+    say("saved to %s's favorites: %s", char, cut(name, 50))
+end
+
+local function useLook(e)
+    for pass = 1, 2 do                          -- twice: matched groups may move a sibling on the first
+        for _, si in ipairs(charSlots(e.char)) do
+            local slot = W.slots()[si]
+            local want = 0
+            for vi, v in ipairs(slot.variants) do if v.id == e.picks[slot.id] then want = vi end end
+            if W.variantIndex(slot) ~= want then setSlot(si, want, true) end
+        end
+    end
+    say("%s: %s", e.char, cut(e.name, 60))
+end
+
+-- d = -1 / 1: swap with the previous / next look of the same character.
+local function favMove(char, k, d)
+    local list, mine = W.favorites(), {}
+    for i, e in ipairs(list) do if e.char == char then mine[#mine + 1] = i end end
+    for j, i in ipairs(mine) do
+        local o = mine[j + d]
+        if i == k and o then
+            list[i], list[o] = list[o], list[i]
+            W.saveFavorites()
+            say("moved %s", d < 0 and "up" or "down")
+            return
+        end
     end
 end
 
@@ -736,7 +831,7 @@ local function peek()
 end
 
 local function tabsRow()
-    local v = st.view == "pick" and "outfits" or st.view
+    local v = (st.view == "pick" or st.view == "fav") and "outfits" or st.view
     return { help = "Peek hides the menu for a few seconds (camera free) so you can look at the character.",
         b = { btn("Outfits", function() go("outfits") end, true, v == "outfits"),
               btn("Presets", function() go("presets") end, true, v == "presets"),
@@ -747,7 +842,7 @@ end
 
 local function setWear(si, slot, on)
     W.setWear(slot.id, on)
-    local worn, under = wornName(slot.character)
+    local worn, under = wornName(charOf(slot))
     if on then
         say("%s worn in place of %s", slotDisplay(slot, true), worn or "the current outfit")
     else
@@ -764,7 +859,7 @@ local function wearBtn(si, slot, w)
         return btn("Unwear", function() setWear(si, slot, false) end, true, true, w)
     end
     if not W.canWear(slot) or W.variantIndex(slot) == 0 or stateOf(si) ~= "unused" then return nil end
-    local worn = wornName(slot.character)
+    local worn = wornName(charOf(slot))
     if not worn then return nil end
     return btn("Wear", function() setWear(si, slot, true) end, true, false, w)   -- the row says in place of what
 end
@@ -828,15 +923,15 @@ local function wearsRow(rows, char)
     if worn and under then
         local by
         for _, slot in ipairs(W.slots()) do
-            if slot.character == char and W.isWear(slot.id) and W.variantIndex(slot) > 0 then by = slotDisplay(slot) end
+            if slotChars(slot)[char] and W.isWear(slot.id) and W.variantIndex(slot) > 0 then by = slotDisplay(slot) end
         end
-        value, col = string.format("%s (Wear: in place of %s)", by or worn, under), C.text
+        value, col = string.format("%s (in place of %s)", by or worn, under), C.text
     elseif worn then
         value, col = worn, C.text
     end
-    rows[#rows + 1] = { label = char .. " wears", value = cut(value, 44), lc = C.muted, vc = col, lw = 2, vw = 5,
-        help = "The outfit " .. char .. " has on right now. An outfit mod replaces one game outfit; Wear puts "
-            .. "its body mesh on instead of whatever " .. char .. " wears (one mesh replaces the other; they don't layer)." }
+    rows[#rows + 1] = { label = char .. " wears", value = cut(value, 34), lc = C.muted, vc = col, lw = 2, vw = 5,
+        help = "The outfit " .. char .. " has on right now. Favorites: " .. char .. "'s saved looks.",
+        b = { btn("Favorites", function() st.favChar, st.favPage = char, 1 go("fav") end) } }
 end
 
 local OUTFIT_HELP = "< > step through the variants, Choose shows them all by name, Off = the game's own. "
@@ -1037,6 +1132,46 @@ local function pickRows(rows)
         help = "Off puts the game's own outfit back for this slot. Random picks another variant.", b = foot }
 end
 
+-- One character's favorites (saved looks), in the player's order.
+local function favRows(rows)
+    local char = st.favChar or st.filter
+    if not char then go("outfits") return outfitRows(rows) end
+    local items = {}
+    for k, e in ipairs(W.favorites()) do if e.char == char then items[#items + 1] = { k = k, e = e } end end
+    local cur = currentLook(char)
+    rows[#rows + 1] = { label = char .. " favorites", lc = C.accent, lw = 4,
+        help = "Save look stores everything " .. char .. " has on from your mods. Use puts it back; "
+            .. "Up / Down set the order. Kept in favorites.txt.",
+        b = { btn("Save look", function() saveLook(char) end),
+              btn("Back", function() go("outfits") end) } }
+    if #items == 0 then
+        rows[#rows + 1] = { label = "No favorites yet. Pick an outfit, then press Save look.", lc = C.muted, lw = 1 }
+        return
+    end
+    local per = NROWS - #rows - 1
+    local pages = math.max(1, math.ceil(#items / per))
+    st.favPage = math.max(1, math.min(st.favPage, pages))
+    for n = (st.favPage - 1) * per + 1, math.min(#items, st.favPage * per) do
+        local it = items[n]
+        local inUse = sameLook(it.e.picks, cur)
+        rows[#rows + 1] = { label = n .. ".  " .. cut(it.e.name, 40), lc = inUse and C.accent or C.text, lw = 1,
+            help = it.e.name .. (inUse and " (on now)" or ""),
+            b = { btn("Use", function() useLook(it.e) end, true, inUse),
+                  btn("Up", function() favMove(char, it.k, -1) end, n > 1, false, nil, "already first"),
+                  btn("Down", function() favMove(char, it.k, 1) end, n < #items, false, nil, "already last"),
+                  btn("Remove", function()
+                      table.remove(W.favorites(), it.k)
+                      W.saveFavorites()
+                      say("removed from %s's favorites: %s", char, cut(it.e.name, 50))
+                  end) } }
+    end
+    if pages > 1 then
+        rows[#rows + 1] = { value = string.format("Page %d/%d", st.favPage, pages), vc = C.muted, vw = 2,
+            b = { btn("< Page", function() st.favPage = st.favPage - 1 end, st.favPage > 1, false, nil, "first page"),
+                  btn("Page >", function() st.favPage = st.favPage + 1 end, st.favPage < pages, false, nil, "last page") } }
+    end
+end
+
 local function presetRows(rows)
     st.presets = st.presets or W.loadPresets()
     for i = 1, 8 do
@@ -1173,9 +1308,10 @@ local function pickResult(si)
     if state == "unused" then return "nothing on screen changed: " .. whyUnused(slot), C.warn end
     if state == "on" then
         if W.autoWorn and W.autoWorn(slot.id) and W.isWear(slot.id) then
-            local _, under = wornName(slot.character)
+            local char = charOf(slot)
+            local _, under = wornName(char)
             return string.format("made for %s, so it is worn in place of %s (Auto Wear)",
-                W.outfitName(W.targetOutfit(slot)) or "another outfit", under or "the current outfit"), C.good
+                W.outfitName(W.targetOutfit(slot, char)) or "another outfit", under or "the current outfit"), C.good
         end
         local sh = W.slotShown and W.slotShown(slot.id)
         if sh and sh.total > 0 then return string.format("%d/%d pieces on screen", sh.shown, sh.total), C.good end
@@ -1272,6 +1408,7 @@ end
 local function render(force)
     local rows = { tabsRow() }
     if st.view == "pick" then pickRows(rows)
+    elseif st.view == "fav" then favRows(rows)
     elseif st.view == "presets" then presetRows(rows)
     elseif st.view == "settings" then settingRows(rows)
     else outfitRows(rows) end
@@ -1403,7 +1540,9 @@ local function handle(ev)
     elseif ev == "ok" then press(hasButtons(row) and row.b[st.col] or nil, "key")
     elseif ev == "pgup" or ev == "pgdn" then
         local d = ev == "pgdn" and 1 or -1
-        if st.view == "pick" then st.pickPage = st.pickPage + d else st.page = st.page + d end
+        if st.view == "pick" then st.pickPage = st.pickPage + d
+        elseif st.view == "fav" then st.favPage = st.favPage + d
+        else st.page = st.page + d end
     elseif ev == "click" then click()
     end
     if W.flushPending then W.flushPending() end   -- apply what this event asked for, then draw

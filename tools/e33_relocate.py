@@ -5,7 +5,7 @@ Each variant's assets are moved to unique same-length paths, so all variants can
 installed at once without overriding the game. The E33Wardrobe UE4SS Lua mod then puts the
 chosen variant on the characters at runtime (in-game menu, keys, console).
 
-  py e33_relocate.py --mod "<library>\\<mod folder>"              (Paks folder from the Mixer's settings)
+  py e33_relocate.py --mod "<library>\\<mod folder>"              (Paks folder saved or found automatically)
   py e33_relocate.py --paks "<game>\\Sandfall\\Content\\Paks" --mod "<library>\\<mod folder>"
   py e33_relocate.py --remove "<mod name>"                       (take a mod out of the wardrobe)
 
@@ -48,7 +48,10 @@ CHARACTERS = ['Lune', 'Sciel', 'Maelle', 'Verso', 'Monoco', 'Gustave']
 BULK_EXTS = ('.ubulk', '.uptnl', '.m.ubulk')
 FILTER_CHARS = 20000                  # stay well under the Windows 32k command-line limit
 TESTED_RETOC = '0.1.5'                # uses its --no-compres-shaders spelling
-CONFIG_PATH = os.path.join(HERE, 'e33mixer_config.json')
+# Paths on this PC (paks_dir, library, retoc): saved with --save. The Mixer's settings file is read
+# when this one doesn't exist yet. E33_CONFIG points the tests elsewhere.
+CONFIG_PATH = os.environ.get('E33_CONFIG') or os.path.join(HERE, 'e33wardrobe_config.json')
+OLD_CONFIG_PATH = os.path.join(HERE, 'e33mixer_config.json')
 
 
 def find_retoc(explicit):
@@ -113,13 +116,21 @@ def write_json(path, data):
 
 
 def read_config():
-    """The Mixer's settings (paks_dir, library, retoc), if it was set up."""
-    try:
-        with open(CONFIG_PATH, encoding='utf-8') as f:
-            cfg = json.load(f)
-        return cfg if isinstance(cfg, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    """Saved paths (paks_dir, library, retoc): this tool's settings, else the Mixer's."""
+    for path in ([CONFIG_PATH] if os.environ.get('E33_CONFIG') else [CONFIG_PATH, OLD_CONFIG_PATH]):
+        try:
+            with open(path, encoding='utf-8') as f:
+                cfg = json.load(f)
+            if isinstance(cfg, dict):
+                return cfg
+        except (OSError, ValueError):
+            pass
+    return {}
+
+
+def save_config(cfg):
+    write_json(CONFIG_PATH, {k: v for k, v in cfg.items() if v})
+    print('Saved to', CONFIG_PATH)
 
 
 def default_lua_dir(paks):
@@ -841,12 +852,16 @@ def main(argv=None):
 def _main(argv, tee):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--version', action='version', version=f'E33 Wardrobe relocator {e33common.VERSION}')
-    ap.add_argument('--paks', help='game Sandfall\\Content\\Paks folder (default: the Mixer\'s setting, or found '
+    ap.add_argument('--paks', help='game Sandfall\\Content\\Paks folder (default: the saved setting, or found '
                                    'automatically)')
+    ap.add_argument('--library', help='mod library folder, for --mod with just a name (default: Paks_ModLibrary '
+                                      'next to Paks)')
+    ap.add_argument('--save', action='store_true',
+                    help='remember --paks, --library and --retoc for later runs (tools\\e33wardrobe_config.json)')
     ap.add_argument('--mod', action='append', help='mod folder, or a folder name in the library (repeatable)')
     ap.add_argument('--remove', action='append', metavar='MOD',
                     help='take a relocated mod out of the wardrobe (deletes its relocated paks; repeatable)')
-    ap.add_argument('--retoc', help='path to retoc.exe (default: next to this script, the Mixer\'s setting, or PATH)')
+    ap.add_argument('--retoc', help='path to retoc.exe (default: next to this script, the saved setting, or PATH)')
     ap.add_argument('--out', help='output folder for relocated paks (default Paks\\~mods\\_E33Wardrobe)')
     ap.add_argument('--lua-dir', help='UE4SS Mods\\E33Wardrobe folder (default derived from --paks)')
     ap.add_argument('--work', help='parent folder for the temporary work folder (same drive as the game)')
@@ -869,16 +884,12 @@ def _main(argv, tee):
     if not a.paks and not a.from_legacy:
         a.paks = cfg.get('paks_dir')
         if not e33common.is_paks_dir(a.paks):
-            try:
-                import e33_mixer
-                a.paks = e33_mixer.detect_paks_dir()
-            except Exception:
-                a.paks = None
+            a.paks = e33common.detect_paks_dir()
         if a.paks:
             print('Paks folder:', a.paks)
     if not a.from_legacy and not (a.paks and os.path.isdir(a.paks)):
         raise SystemExit('Could not find the game. Pass --paks "<game>\\Sandfall\\Content\\Paks" '
-                         '(or set it once in the Mixer: e33_mixer.py --paks "..." config --save).')
+                         '(add --save to remember it).')
     if not a.from_legacy and not e33common.is_paks_dir(a.paks):
         raise SystemExit(f'{a.paks} is not the game\'s Paks folder (it has no global.utoc).')
     out_root = a.out or os.path.join(a.paks, '~mods', '_E33Wardrobe')
@@ -887,9 +898,15 @@ def _main(argv, tee):
         if not a.from_legacy and e33common.game_running(fresh=True):
             raise SystemExit('The game is running. Close it first: its paks are locked while it runs.')
         return remove_mods(a.remove, out_root, lua_dir)
+    if a.save:
+        cfg = dict(cfg, paks_dir=a.paks, **({'library': a.library} if a.library else {}),
+                   **({'retoc': a.retoc} if a.retoc else {}))
+        save_config(cfg)
+        if not a.mod:
+            return 0
     if not a.mod:
         ap.error('give at least one --mod (or --remove)')
-    library = cfg.get('library') or (os.path.join(os.path.dirname(a.paks), 'Paks_ModLibrary') if a.paks else None)
+    library = a.library or cfg.get('library') or (os.path.join(os.path.dirname(a.paks), 'Paks_ModLibrary') if a.paks else None)
     mods = []
     for m in a.mod:
         m = m.strip().rstrip('"')                 # the Windows "...\\" quoting slip

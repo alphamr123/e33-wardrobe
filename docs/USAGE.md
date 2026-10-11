@@ -9,6 +9,7 @@ Fix look work without.
 - [The menu at a glance](#the-menu-at-a-glance)
 - [Outfits tab](#outfits-tab)
 - [Choosing a variant](#choosing-a-variant)
+- [Favorites](#favorites)
 - [Clean](#clean)
 - [Fix look](#fix-look)
 - [Peek](#peek)
@@ -118,6 +119,19 @@ under its group's name. The blue one is in use; the help line lists the full nam
   can watch the character. **Stop** ends it.
 - **Wear** / **Unwear**, as on the row.
 
+## Favorites
+
+Each character has a list of saved looks. Press **Favorites** on the "Lune wears" row to open
+Lune's list.
+
+- **Save look** stores everything that character has on from your mods: outfit, colours and
+  one-option mods. Saving the same look twice is refused.
+- **Use** puts that look back. Slots that weren't part of the look are switched off. The look
+  that is on now is highlighted.
+- **Up** / **Down** set the order; **Remove** deletes a look.
+
+Looks are kept in `favorites.txt`, next to `settings.txt`. Updates never overwrite it.
+
 ## Clean
 
 **Clean** (bottom row of Outfits) takes blood and dirt off every character, and stays on for
@@ -200,7 +214,7 @@ Blueprint mods with it).
 Outfit names in messages ("made for Potato bag") come from the mesh names. To rename one, add for
 example `outfit_names = { Potato = "Potato bag" }` to the table in `config.lua`.
 
-Updating the mod or re-running the relocator replaces `config.example.lua` but never `config.lua`,
+Updating the mod or re-running the relocator replaces `config.example.lua` but never `config.lua`, `favorites.txt`,
 `settings.txt`, `presets.txt` or `selection.txt`.
 
 ## Files the mod keeps
@@ -212,6 +226,7 @@ Updating the mod or re-running the relocator replaces `config.example.lua` but n
 | `settings.txt` | Settings |
 | `selection.txt` | Your picks, in pick order (the last pick wins where variants overlap) |
 | `presets.txt` | Presets |
+| `favorites.txt` | Favorites, per character, in your order |
 | `live_log.txt`, `live_log_previous.txt`, `dump.txt`, `report.txt` | Recording and reports ([TROUBLESHOOTING.md](TROUBLESHOOTING.md)) |
 
 ## Limitations

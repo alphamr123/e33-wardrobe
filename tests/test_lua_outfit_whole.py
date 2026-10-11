@@ -57,6 +57,13 @@ asset("SkeletalMesh", "/Game/Characters/Lune/Body/SK_Lune_Placeholder", "SK_Lune
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic") } }) })
 asset("SkeletalMesh", "/Game/Characters/ZWLIGHT/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder",
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic") } }) })
+-- a mod body material whose base colour points at a texture nobody shipped (PC: Lune showed grey)
+asset("MaterialInstanceConstant", "/Game/Characters/ZWGREY/Body/MI_Body_Mod", "MI_Body_Mod",
+  { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("BaseColor") },
+      ParameterValue = setmetatable({}, { __index = function(_, k) if k == "IsValid" then return function() return false end end end }) } }) })
+asset("Texture2D", "/Game/Characters/ZWGREY/Chic/T_Chic_D-mod", "T_Chic_D-mod")
+asset("SkeletalMesh", "/Game/Characters/ZWGREY/Body/SK_Lune_Bikini_B_Skin", "SK_Lune_Bikini_B_Skin",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY/Body/MI_Body_Mod.MI_Body_Mod") } }) })
 '''
 
 VARIANTS = r'''return {
@@ -79,6 +86,18 @@ VARIANTS = r'''return {
       { id = "O/a", label = "A", map = {
         ["/Game/Characters/Lune/Chic/SK_Lune_Chic"] = { "/Game/Characters/ZWOUTFITA/Chic/SK_Lune_Chic", "SK_Lune_Chic", "SkeletalMesh" },
         ["/Game/Characters/Lune/Chic/T_Chic_D"] = { "/Game/Characters/ZWOUTTEX/Chic/T_Chic_D", "T_Chic_D", "Texture2D" } } } } } } },
+  { mod = "Grey", slots = {
+    { id = "G/main", label = "Grey: Lune outfit", character = "Lune", variants = {
+      { id = "G/a", label = "A", map = {
+        ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_B_Skin"] = { "/Game/Characters/ZWGREY/Body/SK_Lune_Bikini_B_Skin", "SK_Lune_Bikini_B_Skin", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Chic/T_Chic_D-mod"] = { "/Game/Characters/ZWGREY/Chic/T_Chic_D-mod", "T_Chic_D-mod", "Texture2D" } } } } } } },
+  -- one costume for two characters (PC: "Altered Flower Suit Costume", Lune + Maelle + Sciel):
+  -- the slot is tied to nobody; each mesh's path says whose it is
+  { mod = "Costume", slots = {
+    { id = "K/main", label = "Costume: Main", variants = {
+      { id = "K/a", label = "Main", map = {
+        ["/Game/Characters/Maelle/Body/SK_Maelle_Placeholder"] = { "/Game/Characters/ZWMAEL/Body/SK_Maelle_Placeholder", "SK_Maelle_Placeholder", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/SK_Lune_Placeholder"] = { "/Game/Characters/ZWLIGHT/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder", "SkeletalMesh" } } } } } } },
 }
 '''
 
@@ -88,7 +107,7 @@ TEX_MOD = '/Game/Characters/ZWCOLOR01/Chic/T_Chic_D.T_Chic_D'
 TEX_OUTFIT = '/Game/Characters/ZWOUTTEX/Chic/T_Chic_D.T_Chic_D'
 
 
-def run(settings):
+def run(settings, selection=None):
     tmp = tempfile.mkdtemp(prefix='e33whole_')
     mod = os.path.join(tmp, 'E33Wardrobe')
     scripts = os.path.join(mod, 'Scripts')
@@ -97,6 +116,8 @@ def run(settings):
     open(os.path.join(scripts, 'menu.lua'), 'w').write('return { init = function(api) API_OUT = api end }\n')
     open(os.path.join(scripts, 'variants.lua'), 'w').write(VARIANTS)
     open(os.path.join(mod, 'settings.txt'), 'w').write(settings)
+    if selection:
+        open(os.path.join(mod, 'selection.txt'), 'w').write(selection)
     L = lua54.LuaRuntime(unpack_returned_tuples=True)
     L.execute(base.MOCK)
     body, _actor = L.execute(base.SCENARIO)
@@ -238,6 +259,52 @@ def main():
           G.FIXARG == 'Lune' and W.lastFix().n == 1 and 're-dressed 1 of 1 character(s) (Lune)' in G.getlog()
           and 'ApplyCurrentCharacterSkin(NameProperty Character Name) - calling it with each character\'s name' in live,
           (G.FIXARG, G.getlog()[-300:]))
+    shutil.rmtree(tmp)
+
+    # ---- a costume with a mesh per character becomes one slot per character (PC: switching it for
+    # one character switched it for all; before that, nothing changed and no Auto Wear)
+    tmp, mod, L, G, W, mesh, tex = run('wear = K/main\n')
+    sl = list(W.slots().values())
+    ids = [x.id for x in sl]
+    check('a costume for Lune and Maelle is split into one slot per character, the old one is gone',
+          'K/main@Lune' in ids and 'K/main@Maelle' in ids and 'K/main' not in ids, ids)
+    ls = next(x for x in sl if x.id == 'K/main@Lune')
+    keys = list(ls.variants[1].map.keys())
+    check('  Lune\'s slot holds only Lune\'s assets', ls.character == 'Lune' and keys == ['/Game/Characters/Lune/Body/SK_Lune_Placeholder'], keys)
+    check('  a Wear flag saved under the old slot is carried over to both',
+          W.isWear('K/main@Lune') and W.isWear('K/main@Maelle') and not W.isWear('K/main'))
+    W.setWear('K/main@Lune', False)
+    W.setWear('K/main@Maelle', False)
+    li = ids.index('K/main@Lune') + 1
+    W.setVariant(li, 1)                                          # Lune wears Chic
+    G.settle()
+    G.tickGT(40)
+    check('  Auto Wear puts the costume on Lune', W.isWear('K/main@Lune') and mesh().startswith('/Game/Characters/ZWLIGHT/'),
+          (W.isWear('K/main@Lune'), mesh()))
+    check('  and leaves Maelle\'s slot alone', not W.isWear('K/main@Maelle') and W.variantIndex(sl[ids.index('K/main@Maelle')]) == 0)
+    W.setVariant(li, 0)
+    G.settle()
+    check('  switching Lune\'s slot off: back to Chic', mesh() == CHIC, mesh())
+    shutil.rmtree(tmp)
+
+    # ---- a mod material with an empty texture slot gets what the body showed before
+    tmp, mod, L, G, W, mesh, tex = run('')
+    gi = [x.id for x in W.slots().values()].index('G/main') + 1
+    W.setVariant(gi, 1)                                          # Lune wears Chic: Auto Wear puts it on
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('an empty base colour in a mod\'s material (an invalid object in UE4SS) gets the mod\'s own unused texture '
+          'named like the old one (T_Chic_D -> T_Chic_D-mod), not grey',
+          mesh().startswith('/Game/Characters/ZWGREY/') and tex() == '/Game/Characters/ZWGREY/Chic/T_Chic_D-mod.T_Chic_D-mod'
+          and "(the mod's own, named like it)" in live, (mesh(), tex(), [l for l in live.splitlines() if 'empty' in l][:2]))
+    shutil.rmtree(tmp)
+
+    # an old pick saved under the unsplit slot is carried over too
+    tmp, mod, L, G, W, mesh, tex = run('', selection='K/main\tK/a\n')
+    sel = open(os.path.join(mod, 'selection.txt'), encoding='utf-8').read()
+    check('a pick saved under the old slot moves to each character\'s slot',
+          'K/main@Lune\tK/a@Lune' in sel and 'K/main@Maelle\tK/a@Maelle' in sel and 'K/main\tK/a\n' not in sel, sel)
     shutil.rmtree(tmp)
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

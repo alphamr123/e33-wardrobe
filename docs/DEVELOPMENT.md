@@ -50,6 +50,20 @@ unless these environment variables point at fixtures you build yourself:
 | `test_previews.py` | `E33_PREVIEW_GLOBAL`, `E33_PREVIEW_LEGACY`, `E33_RETOC` | Script objects that include `Texture2D`, and cooked textures in legacy form |
 | `test_relocation.py` | `E33_RELOC_SRC`, `E33_RETOC` | A legacy package tree to relocate and read back |
 
+## Previewing the menu
+
+`tests/render_menu.py` draws the menu without the game: it runs the real `main.lua` and
+`menu.lua` in the test mock, then renders the widget tree as HTML (same width, row height, font
+sizes, colours and Auto/Fill sizing) and screenshots it with headless Chromium. Look at the
+pictures after every menu change. Edit `SCENES` in the file to choose the screens.
+
+```
+python tests/render_menu.py out/ [variants.lua] --chrome <chromium or headless_shell> --font-dir <folder with Roboto.ttf>
+```
+
+Without a `variants.lua` it uses the test wardrobe. It approximates Slate's layout: good for
+crowded rows, cut text and highlights, not for exact pixels.
+
 ## What the tests cover
 
 - **Lua suites** run the real `main.lua` and `menu.lua` in lupa against a mock of the UE4SS API
