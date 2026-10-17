@@ -36,6 +36,8 @@ lua/E33Wardrobe/live_log_previous.txt
 lua/E33Wardrobe/dump.txt
 lua/E33Wardrobe/report.txt
 lua/E33Wardrobe/wardrobe_registry.json
+# a player's own settings (releases ship config.example.lua only)
+lua/E33Wardrobe/Scripts/config.lua
 # lua/E33Wardrobe/Scripts/variants.lua is a tracked placeholder (return {}); keep it tracked.
 
 # Relocator outputs and work folders
@@ -66,7 +68,7 @@ UE4SS.log
 *.dmp
 *.DMP
 
-# Nexus upload notes (kept locally, not published) and stray archives
+# Nexus upload notes and stray archives
 /release/
 *.zip
 *.7z
@@ -77,3 +79,9 @@ tools/e33wardrobe_config.json
 /bin/
 /dist_app/
 /build_app/
+
+/handoff/
+/CLAUDE.md
+/docs/runbook.md
+lua/E33Wardrobe/commands.txt
+.gitignore

@@ -1,4 +1,4 @@
-/* E33 Wardrobe UI. Plain JS, no framework, no network.
+/* E33 Wardrobe UI: the window's logic, in plain JS (no framework, no network).
    Talks to the Python backend through call(); the contract is app/API.md. */
 (function () {
   'use strict';

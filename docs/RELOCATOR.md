@@ -143,6 +143,15 @@ it either when the original mod is installed, so the reference is simply empty i
 relocator keeps such variants and prints a note naming the package. `--strict-imports` refuses
 them instead; use it to check whether a pak the mod page asks for is missing.
 
+A reference that differs from one of the mod's own packages only in letter case (a multi-outfit mod's
+Sciel Blueprint asks for `SK_Sciel_Chic_Skin`, the mod's mesh is `SK_Sciel_Chic_skin`) does work in
+game: the game ignores case. retoc doesn't, so before extracting, the relocator respells such
+references like the package's own name (from its header), in a copy of the container in the work
+folder. The run prints `fixed the letter case of N link(s) in <container>: <old> -> <new>`.
+References to game packages are never respelled: mods link to them by the package's own name, and
+the game's file index can spell a folder differently (`Civil/Textures` in the index, `Civil/textures`
+in the package).
+
 ## Edits and fixes (`fixes.json`)
 
 The app's fix tools (Edit rows, Disable, Choose texture, Choose material, Bundle) save their

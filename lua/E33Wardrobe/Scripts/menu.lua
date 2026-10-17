@@ -2,8 +2,9 @@
 E33Wardrobe in-game menu.
 
 The panel is plain UMG assembled from Lua: one UserWidget whose WidgetTree is filled in here
-(canvas > border > size box > vertical box of rows). No widget blueprint or other game asset is
-used, so nothing can be missing after a game update.
+(canvas > border > size box > vertical box: title bar, rows, help, status bar). No widget blueprint
+or other game asset is used, so nothing can be missing after a game update. It looks like a classic
+desktop window, as the app does: square buttons with 1px edges, tab strips, list rows, status bar.
 
   Delete                   open / close (config.lua: keys.menu)
   mouse                    click the buttons (the cursor is shown while the menu is open)
@@ -35,8 +36,8 @@ local st = { view = "outfits", filter = nil, page = 1, pick = nil, pickPage = 1,
              row = 2, col = 1, msg = "", rows = {}, A = nil, B = nil, showing = nil, slide = nil,
              kbd = false, flash = nil, peekUntil = nil, favChar = nil, favPage = 1 }
 
-local NROWS, NBTN = 14, 6
-local WIDTH, ROW_H = 660, 30
+local NROWS, NBTN = 14, 6              -- rows; buttons in row 2 (character tabs), the others have NBTN - 1
+local WIDTH, ROW_H = 660, 28
 -- ESlateVisibility
 local VISIBLE, COLLAPSED, HIT_INVISIBLE, SELF_INVISIBLE = 0, 1, 3, 4
 
@@ -49,11 +50,21 @@ for v = 0, 255 do
 end
 local function lin(r, g, b, a) return { R = TO_LINEAR[r], G = TO_LINEAR[g], B = TO_LINEAR[b], A = a or 1 } end
 
+-- Classic dark desktop look, the same as the app (app/ui/app.css): grey faces with 1px edges, square
+-- corners, one blue accent for what is selected or in use. Yellow is only the keyboard focus.
 local C = {
-    panel = lin(14, 18, 28, 0.94), row = lin(26, 31, 44, 0.85), rowFocus = lin(44, 54, 78, 0.95),
-    text = lin(234, 239, 247), muted = lin(140, 154, 178), accent = lin(255, 196, 96),
-    good = lin(150, 222, 160), btn = lin(70, 84, 112), hl = lin(70, 130, 200), off = lin(36, 40, 50),
-    focus = lin(255, 196, 96), dark = lin(14, 16, 22), warn = lin(255, 140, 90), flash = lin(78, 70, 40, 0.95),
+    frame = lin(22, 22, 24), window = lin(45, 45, 48), caption = lin(60, 60, 66),
+    row = lin(30, 30, 30), rowAlt = lin(36, 36, 38), head = lin(52, 52, 56),
+    rowFocus = lin(40, 50, 66), flash = lin(40, 66, 98), status = lin(34, 34, 36),
+    text = lin(220, 220, 220), muted = lin(154, 154, 154), dim = lin(118, 118, 122),
+    accent = lin(143, 184, 230), good = lin(110, 190, 110), warn = lin(222, 166, 62),
+    btn = lin(64, 64, 68), btnEdge = lin(98, 98, 106),          -- a button and its 1px edge
+    off = lin(44, 44, 47), offEdge = lin(62, 62, 66),            -- disabled
+    hl = lin(58, 110, 165), hlEdge = lin(110, 155, 205),         -- selected / in use / switched on
+    strip = lin(36, 36, 39),                                     -- behind the top tab strip
+    tab = lin(50, 50, 54), tabEdge = lin(72, 72, 78),            -- a tab that isn't open
+    tabOnEdge = lin(98, 98, 106),                                -- the open tab (its face: the page below)
+    focus = lin(250, 204, 90), focusEdge = lin(255, 236, 170), dark = lin(24, 24, 24),
 }
 
 -- --------------------------------------------------------------------------- helpers
@@ -649,6 +660,12 @@ local function sweep()
     end
 end
 
+local Z_ORDER = 9000                      -- above the game's HUD and menu widgets
+local FONT = { title = 14, row = 13, button = 12, small = 12 }
+-- edge: a button's 1px frame (the frame is a border drawn around it); side: left / right margin
+-- of the rows, help and status bar; caption: space either side of a button's text
+local PADDING = { edge = 1, side = 6, rowLeft = 6, cell = 6, button = 1, caption = 6 }
+
 -- cached setters: only call into UMG when something changed
 local function setText(c, s)
     if c.text ~= s then c.text = s; c.w:SetText(FText(s)) end
@@ -682,9 +699,28 @@ end
 local function setEnabled(c, e)
     if c.en ~= e then c.en = e; c.w:SetIsEnabled(e) end
 end
+local function setWidth(c, px)
+    if c.wo ~= px then c.wo = px; c.w:SetWidthOverride(px) end
+end
+local function setGap(c, top)                -- space above a row (between sections)
+    if c.slot and c.gap ~= top then
+        c.gap = top
+        pcall(function() c.slot:SetPadding({ Left = PADDING.side, Top = top, Right = PADDING.side, Bottom = 0 }) end)
+    end
+end
 
-local Z_ORDER = 9000                      -- above the game's HUD and menu widgets
-local PAD = { frame = { 14, 10 }, rowLeft = 6, cellRight = 6, button = 2, caption = 8 }
+-- A button's shape: "btn" (a 1px edge all round), or a tab: open at the bottom and standing on its
+-- strip's floor, the open one 3px taller than the others ("tab" / "tabLow").
+local function setShape(B, shape)
+    if B.shape == shape then return end
+    B.shape = shape
+    local e, tab = PADDING.edge, shape ~= "btn"
+    pcall(function() B.edge.w:SetPadding({ Left = e, Top = e, Right = e, Bottom = tab and 0 or e }) end)
+    pcall(function()
+        B.slot:SetPadding(tab and { Left = 0, Top = shape == "tab" and 2 or 5, Right = 1, Bottom = 0 }
+            or { Left = PADDING.button, Top = 1, Right = PADDING.button, Bottom = 1 })
+    end)
+end
 
 local function build(pc)
     local function class(n)
@@ -705,6 +741,7 @@ local function build(pc)
     local function child(parent, kind, attach)
         local w = construct(class(kind), tree)
         local slot = parent and parent[attach or "AddChild"](parent, w) or nil
+        if not valid(slot) then slot = nil end      -- not added: nothing may be called on a null slot
         return w, slot
     end
     local function text(parent, attach, size, wrap)
@@ -714,55 +751,76 @@ local function build(pc)
         pcall(function() t:SetClipping(1) end)            -- long names are cut at the cell edge
         return { w = t, slot = slot }
     end
-    local function gapBelow(slot, px)
-        pcall(function() slot:SetPadding({ Left = 0, Top = 0, Right = 0, Bottom = px }) end)
+    local function pad(slot, l, t, r, b)
+        if slot then pcall(function() slot:SetPadding({ Left = l, Top = t, Right = r, Bottom = b }) end) end
     end
+    local function margin(w, l, t, r, b) w:SetPadding({ Left = l, Top = t, Right = r, Bottom = b }) end
 
+    -- frame (1px dark edge) > window > fixed width > column: title bar, rows, help, status bar
     local root = child(nil, "CanvasPanel")
     tree.RootWidget = root
     pcall(function() root:SetVisibility(SELF_INVISIBLE) end)
     local frame, fslot = child(root, "Border", "AddChildToCanvas")
-    frame:SetBrushColor(C.panel)
-    frame:SetPadding({ Left = PAD.frame[1], Top = PAD.frame[2], Right = PAD.frame[1], Bottom = PAD.frame[2] })
+    frame:SetBrushColor(C.frame)
+    margin(frame, 1, 1, 1, 1)
     pcall(function() fslot:SetAutoSize(true) end)
-    local width = child(frame, "SizeBox")
+    local window = child(frame, "Border")
+    window:SetBrushColor(C.window)
+    margin(window, 0, 0, 0, 0)
+    local width = child(window, "SizeBox")
     width:SetWidthOverride(WIDTH)
     local column = child(width, "VerticalBox")
 
     local P = { host = host, frame = frame, fslot = fslot, rows = {}, pc = pc }
-    P.title = text(column, "AddChildToVerticalBox", 20)
-    gapBelow(P.title.slot, 2)
-    P.status = text(column, "AddChildToVerticalBox", 14, true)
-    gapBelow(P.status.slot, 6)
+    local bar, bslot = child(column, "Border", "AddChildToVerticalBox")
+    bar:SetBrushColor(C.caption)
+    margin(bar, 8, 3, 8, 3)
+    pad(bslot, 0, 0, 0, 4)
+    P.title = text(bar, "AddChild", FONT.title)
     for r = 1, NROWS do
-        local box, bslot = child(column, "SizeBox", "AddChildToVerticalBox")
+        local box, boxSlot = child(column, "SizeBox", "AddChildToVerticalBox")
         box:SetHeightOverride(ROW_H)
-        gapBelow(bslot, 2)
         local bg = child(box, "Border")
-        bg:SetPadding({ Left = PAD.rowLeft, Top = 1, Right = 2, Bottom = 1 })
+        margin(bg, PADDING.rowLeft, 0, 2, 0)
         local line = child(bg, "HorizontalBox")
-        local R = { box = { w = box }, bg = { w = bg }, btns = {} }
-        for _, key in ipairs({ "label", "value" }) do
-            local c = text(line, "AddChildToHorizontalBox", 14)
-            pcall(function() c.slot:SetVerticalAlignment(2) end)    -- each call on its own: one
-            pcall(function() c.slot:SetPadding({ Left = 0, Top = 0, Right = PAD.cellRight, Bottom = 0 }) end)
-            R[key] = c
+        local R = { box = { w = box, slot = boxSlot }, bg = { w = bg }, btns = {} }
+        setGap(R.box, 0)
+        -- label: a text in a size box, so a row can give it a fixed column width; value: a text
+        local cell, cslot = child(line, "SizeBox", "AddChildToHorizontalBox")
+        pcall(function() cslot:SetVerticalAlignment(2) end)       -- each call on its own: one
+        pad(cslot, 0, 0, PADDING.cell, 0)                         -- that fails mustn't skip the others
+        R.cell = { w = cell, slot = cslot }
+        R.label = text(cell, "AddChild", FONT.row)
+        local function value()
+            R.value = text(line, "AddChildToHorizontalBox", FONT.row)
+            pcall(function() R.value.slot:SetVerticalAlignment(2) end)
+            pad(R.value.slot, 0, 0, PADDING.cell, 0)
         end
-        for k = 1, NBTN do
-            local b, slot = child(line, "Button", "AddChildToHorizontalBox")
-            pcall(function() slot:SetPadding({ Left = PAD.button, Top = 1, Right = PAD.button, Bottom = 1 }) end)
-            local cap = text(b, "AddChild", 13)
-            pcall(function() cap.w:SetJustification(1) end)  -- that fails mustn't skip the others
-            pcall(function() cap.slot:SetPadding({ Left = PAD.caption, Top = 0, Right = PAD.caption, Bottom = 0 }) end)
+        if r ~= 1 then value() end
+        -- each button sits in a border one pixel larger: that border is the button's square edge
+        for k = 1, (r == 2) and NBTN or NBTN - 1 do
+            if r == 1 and k == 4 then value() end              -- the tab strip: Peek / Close to the right
+            local edge, slot = child(line, "Border", "AddChildToHorizontalBox")
+            margin(edge, PADDING.edge, PADDING.edge, PADDING.edge, PADDING.edge)
+            pad(slot, PADDING.button, 1, PADDING.button, 1)
+            local b = child(edge, "Button")
+            local cap = text(b, "AddChild", FONT.button)
+            pcall(function() cap.w:SetJustification(1) end)
+            pad(cap.slot, PADDING.caption, 0, PADDING.caption, 0)
             pcall(function() cap.slot:SetHorizontalAlignment(2) end)
             pcall(function() cap.slot:SetVerticalAlignment(2) end)
-            R.btns[k] = { w = b, cap = cap, slot = slot }
+            R.btns[k] = { w = b, cap = cap, slot = slot, edge = { w = edge }, shape = "btn" }
         end
         P.rows[r] = R
     end
-    P.help = text(column, "AddChildToVerticalBox", 12, true)
+    P.help = text(column, "AddChildToVerticalBox", FONT.small, true)
+    pad(P.help.slot, PADDING.side + 2, 4, PADDING.side + 2, 5)
+    local sbar = child(column, "Border", "AddChildToVerticalBox")
+    sbar:SetBrushColor(C.status)
+    margin(sbar, PADDING.side + 2, 3, PADDING.side + 2, 4)
+    P.status = text(sbar, "AddChild", FONT.small, true)
     setText(P.title, "E33 Wardrobe")
-    setColor(P.title, C.accent)
+    setColor(P.title, C.text)
     setColor(P.status, C.text)
     setColor(P.help, C.muted)
     for _, c in ipairs({ P.title, P.status, P.help }) do setVis(c, HIT_INVISIBLE) end
@@ -796,8 +854,8 @@ local function place(force)
     -- The chosen scale, made smaller when the panel wouldn't fit the screen. The viewport size is
     -- in pixels; dividing by the DPI scale gives the units the panel is laid out in.
     local scale = (S.scale or 100) / 100
-    local panelW = WIDTH + 2 * PAD.frame[1]
-    local panelH = 110 + #st.rows * (ROW_H + 2)
+    local panelW = WIDTH + 2
+    local panelH = 150 + #st.rows * ROW_H + 4          -- title bar, help (3 lines), status bar; rows and a gap
     local SPARE_X, SPARE_Y = 48, 90                     -- screen edges left free (incl. the panel's offset)
     pcall(function()
         local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
@@ -816,11 +874,18 @@ local function place(force)
 end
 
 -- --------------------------------------------------------------------------- views
--- A view is a list of rows: { label, value, lc, vc (colours), lw, vw, bw (fill weights),
--- help, b = { {t = caption, fn = action, on = enabled, hl = highlighted}, ... } }
+-- A view is a list of rows: { label, value, lc, vc (colours), lw, vw, bw (fill weights), lpx (a fixed
+-- label column, px), vauto (value as wide as its text), kind, help,
+-- b = { {t = caption, fn = action, on = enabled, hl = highlighted}, ... } }
+-- kind: "tabs" / "subtabs" (the page and character tab strips), "head" (a group's title row), "chips" (a
+-- grid of buttons), else a list row, or a button bar when the row has no label. List rows alternate
+-- their shade, like a list view. spacer: an empty value cell that pushes the buttons after it right.
+local LABEL_W = 200                             -- the name column of the Outfits list
 
 -- why: shown when a disabled button is clicked.
 local function btn(t, fn, on, hl, w, why) return { t = t, fn = fn, on = on ~= false, hl = hl, w = w, why = why } end
+-- a tab in a tab strip (open: the page shown); Peek, Close and More in a strip stay buttons
+local function tab(t, fn, open) local b = btn(t, fn, true, open) b.tab = true return b end
 
 local function peek()
     local secs = math.max(1, S.peek_s or 3)
@@ -832,10 +897,11 @@ end
 
 local function tabsRow()
     local v = (st.view == "pick" or st.view == "fav") and "outfits" or st.view
-    return { help = "Peek hides the menu for a few seconds (camera free) so you can look at the character.",
-        b = { btn("Outfits", function() go("outfits") end, true, v == "outfits"),
-              btn("Presets", function() go("presets") end, true, v == "presets"),
-              btn("Settings", function() go("settings") end, true, v == "settings"),
+    return { kind = "tabs", spacer = true,
+        help = "Peek hides the menu for a few seconds (camera free) so you can look at the character.",
+        b = { tab("Outfits", function() go("outfits") end, v == "outfits"),
+              tab("Presets", function() go("presets") end, v == "presets"),
+              tab("Settings", function() go("settings") end, v == "settings"),
               btn("Peek", peek, true, false, 0.9),
               btn("Close", function() M.close() end, true, false, 0.9) } }
 end
@@ -900,21 +966,22 @@ local function charTabs(rows, chars)
     end
     for k = first, math.min(#list, first + fit - 1) do
         local c = list[k]
-        b[#b + 1] = btn(here[c] and c or (c .. " -"), function()
+        b[#b + 1] = tab(here[c] and c or (c .. " -"), function()
             st.filter, st.page, S.tab = c, 1, c
             W.saveSettings()
-        end, true, st.filter == c)
+        end, st.filter == c)
     end
-    if #chars > NBTN - 1 then
+    b[#b + 1] = tab("All", function()
+        st.filter, st.page, S.tab = nil, 1, "All"
+        W.saveSettings()
+    end, st.filter == nil)
+    if #chars > NBTN - 1 then                   -- at the end of the strip, like a tab strip's scroll button
         b[#b + 1] = btn("More", function()      -- the next characters; after the last ones, back to the first
             st.tabFirst = (first + fit > #chars) and 1 or first + fit
         end, true, false, 0.7)
     end
-    b[#b + 1] = btn("All", function()
-        st.filter, st.page, S.tab = nil, 1, "All"
-        W.saveSettings()
-    end, true, st.filter == nil, 0.8)
-    rows[#rows + 1] = { help = "One tab per character (\"-\" = not loaded in this area). All lists every character's slots.", b = b }
+    rows[#rows + 1] = { kind = "subtabs", b = b,
+        help = "One tab per character (\"-\" = not loaded in this area). All lists every character's slots." }
 end
 
 local function wearsRow(rows, char)
@@ -929,7 +996,7 @@ local function wearsRow(rows, char)
     elseif worn then
         value, col = worn, C.text
     end
-    rows[#rows + 1] = { label = char .. " wears", value = cut(value, 34), lc = C.muted, vc = col, lw = 2, vw = 5,
+    rows[#rows + 1] = { kind = "head", label = char .. " wears", value = cut(value, 34), lc = C.muted, vc = col, lpx = LABEL_W,
         help = "The outfit " .. char .. " has on right now. Favorites: " .. char .. "'s saved looks.",
         b = { btn("Favorites", function() st.favChar, st.favPage = char, 1 go("fav") end) } }
 end
@@ -969,7 +1036,7 @@ local function slotRow(rows, si)
     rows[#rows + 1] = {
         label = cut(slotDisplay(slot), LOCKS[slot.id] and 18 or 24) .. (LOCKS[slot.id] and " [lock]" or ""),
         value = cut(value, wb and 27 or 36),
-        vc = ncol or (vi == 0 and C.muted or C.accent), lw = 3, vw = wb and 3.4 or 4.2, bg = flash and C.flash or nil,
+        vc = ncol or (vi == 0 and C.dim or C.accent), lpx = LABEL_W, bg = flash and C.flash or nil,
         help = slotNoteHelp(si) or OUTFIT_HELP, b = b }
 end
 
@@ -1081,8 +1148,8 @@ local function pickRows(rows)
                        "only one variant") }
     local wb = wearBtn(si, slot, 1.6)
     if wb then head[#head + 1] = wb end
-    rows[#rows + 1] = { label = cut(slotDisplay(slot, true), 30),
-        value = note or "", vc = ncol or C.accent, lw = 3.2, vw = 1.2,
+    rows[#rows + 1] = { kind = "head", label = cut(slotDisplay(slot, true), 30),
+        value = note or "", vc = ncol or C.accent, vauto = true,
         help = slotNoteHelp(si) or ((slot.mod or "") .. ". Lock keeps this slot when using Randomize / All off. "
             .. "Slides steps through the variants on a timer."),
         b = head }
@@ -1091,11 +1158,11 @@ local function pickRows(rows)
     for vi = 1, n do
         local g = groupOf(slot.variants[vi].label) or ""
         if g ~= last then
-            if g ~= "" then lines[#lines + 1] = { label = g, lc = C.muted, lw = 1 } end
+            if g ~= "" then lines[#lines + 1] = { kind = "head", label = g, lc = C.muted, lw = 1 } end
             last, chips = g, nil
         end
         if not chips or #chips.b >= 3 then
-            chips = { b = {}, full = {}, bw = 1 }
+            chips = { kind = "chips", b = {}, full = {}, bw = 1 }
             lines[#lines + 1] = chips
         end
         chips.b[#chips.b + 1] = btn(cut(variantShort(slot, vi), 24), function() setSlot(si, vi) end, true, vi == cur)
@@ -1129,6 +1196,7 @@ local function pickRows(rows)
         foot[#foot + 1] = btn("Page >", function() st.pickPage = st.pickPage + 1 end, st.pickPage < pages, false, nil, "last page")
     end
     rows[#rows + 1] = { value = pages > 1 and string.format("%d/%d", st.pickPage, pages) or nil, vc = C.muted, vw = 0.6,
+        spacer = true,
         help = "Off puts the game's own outfit back for this slot. Random picks another variant.", b = foot }
 end
 
@@ -1139,7 +1207,7 @@ local function favRows(rows)
     local items = {}
     for k, e in ipairs(W.favorites()) do if e.char == char then items[#items + 1] = { k = k, e = e } end end
     local cur = currentLook(char)
-    rows[#rows + 1] = { label = char .. " favorites", lc = C.accent, lw = 4,
+    rows[#rows + 1] = { kind = "head", label = char .. " favorites", lc = C.text, lw = 4,
         help = "Save look stores everything " .. char .. " has on from your mods. Use puts it back; "
             .. "Up / Down set the order. Kept in favorites.txt.",
         b = { btn("Save look", function() saveLook(char) end),
@@ -1176,8 +1244,8 @@ local function presetRows(rows)
     st.presets = st.presets or W.loadPresets()
     for i = 1, 8 do
         local p = st.presets[i]
-        rows[#rows + 1] = { label = "Preset " .. i, value = cut(presetSummary(p), 40), vc = p and C.accent or C.muted,
-            lw = 1.4, vw = 5,
+        rows[#rows + 1] = { label = "Preset " .. i, value = cut(presetSummary(p), 40), vc = p and C.accent or C.dim,
+            lpx = 76,
             help = "Save stores every slot's current choice (presets.txt); Load applies it; Clear empties it. "
                 .. (p and presetSummary(p) or ""),
             b = { btn("Load", function() presetLoad(i) end, p ~= nil, false, nil, "this preset is empty"),
@@ -1186,7 +1254,7 @@ local function presetRows(rows)
     end
     local function abText(x) return st[x] and presetSummary(st[x]) or "empty" end
     rows[#rows + 1] = { label = "A/B", value = cut("A " .. abText("A") .. " | B " .. abText("B"), 44), vc = C.muted,
-        lw = 1, vw = 5, help = "Store two looks and flip between them to compare.",
+        lpx = 76, help = "Store two looks and flip between them to compare.",
         b = { btn("Store A", function() storeAB("A") end, true, st.showing == "A"),
               btn("Store B", function() storeAB("B") end, true, st.showing == "B"),
               btn("Swap", swapAB, st.A ~= nil and st.B ~= nil, false, nil, "store both A and B first") } }
@@ -1214,11 +1282,11 @@ local function settingRows(rows)
         end
     end
     local function row(key, label, help, after)
-        rows[#rows + 1] = { label = label, value = onoff(S[key]), vc = S[key] and C.good or C.muted, lw = 4, vw = 1.2,
-            bw = 1.3, help = help, b = { btn("Switch", toggle(key, label, after)) } }
+        rows[#rows + 1] = { label = label, value = onoff(S[key]), vc = S[key] and C.good or C.dim, vauto = true,
+            help = help, b = { btn("Switch", toggle(key, label, after)) } }
     end
     local function num(key, label, d, lo, hi, unit, help, after)
-        rows[#rows + 1] = { label = label, value = tostring(S[key]) .. unit, lw = 4, vw = 1.2, bw = 0.65, help = help,
+        rows[#rows + 1] = { label = label, value = tostring(S[key]) .. unit, vauto = true, help = help,
             b = { btn("-", stepper(key, label, -d, lo, hi, unit, after), (S[key] or lo) > lo),
                   btn("+", stepper(key, label, d, lo, hi, unit, after), (S[key] or hi) < hi) } }
     end
@@ -1240,13 +1308,13 @@ local function settingRows(rows)
         .. "Randomize, All off and presets. They stay installed and selected as they are.",
         function() st.page = 1 end)
     rows[#rows + 1] = { label = "Slideshow / Peek seconds",
-        value = string.format("%d s / %d s", S.slideshow_s or 4, S.peek_s or 3), lw = 3, vw = 1.3,
+        value = string.format("%d s / %d s", S.slideshow_s or 4, S.peek_s or 3), vauto = true,
         help = "Seconds between the steps of a Slideshow (Outfits > Choose > Slides), and how long Peek hides the menu.",
         b = { btn("Slides -", stepper("slideshow_s", "Slideshow interval", -1, 1, 60, " s"), (S.slideshow_s or 4) > 1),
               btn("Slides +", stepper("slideshow_s", "Slideshow interval", 1, 1, 60, " s"), (S.slideshow_s or 4) < 60),
               btn("Peek -", stepper("peek_s", "Peek time", -1, 1, 15, " s"), (S.peek_s or 3) > 1),
               btn("Peek +", stepper("peek_s", "Peek time", 1, 1, 15, " s"), (S.peek_s or 3) < 15) } }
-    rows[#rows + 1] = { label = "Menu side / scale", value = S.side .. " " .. tostring(S.scale) .. "%", lw = 4, vw = 1.6,
+    rows[#rows + 1] = { label = "Menu side / scale", value = S.side .. " " .. tostring(S.scale) .. "%", vauto = true,
         help = "Put the menu on the left or right edge of the screen, and size it (it also shrinks to fit small screens).",
         b = { btn("Side", function()
                   S.side = S.side == "left" and "right" or "left"
@@ -1259,16 +1327,27 @@ local function settingRows(rows)
               btn("+", stepper("scale", "Menu scale", 10, 50, 200, "%", function() place(true) end), (S.scale or 100) < 200,
                   false, 0.6) } }
     rows[#rows + 1] = { label = "Mouse cursor / freeze camera", value = onoff(S.cursor) .. " / " .. onoff(S.block_look),
-        lw = 4, vw = 1.6,
+        vauto = true,
         help = "While the menu is open: show the cursor so the buttons can be clicked; stop mouse movement "
             .. "from turning the camera.",
         b = { btn("Cursor", toggle("cursor", "Show mouse cursor", reapplyInput), true, S.cursor),
               btn("Camera", toggle("block_look", "Freeze camera while open", reapplyInput), true, S.block_look) } }
+    rows[#rows + 1] = { label = "Test: game dresses (B)", value = tostring(S.b_swap or "off"):upper(), vauto = true,
+        vc = (S.b_swap or "off") == "off" and C.dim or C.accent,
+        help = "A test for a new way of switching (experimental): off = as before; param = the game's own "
+            .. "dressing call is given the picked outfit's Blueprint. Only outfits that bring their own skin "
+            .. "Blueprint; with Wear on, whatever the character wears. Then press Fix look.",
+        b = { btn("Switch", function()
+                  local nxt = { off = "param", param = "off" }
+                  S.b_swap = nxt[S.b_swap or "off"] or "off"
+                  W.saveSettings()
+                  say("Test: game dresses (B): %s", S.b_swap)
+              end) } }
     row("ui_input", "UI input mode (try if clicks fail)",
         "Switch the game to game+UI input while open; can help clicking. Other mods saw trouble with input modes in cutscenes.",
         reapplyInput)
     rows[#rows + 1] = { label = "Record session / auto report", value = onoff(W.recording()) .. " / " .. onoff(S.auto_report),
-        vc = W.recording() and C.good or C.muted, lw = 4, vw = 1.6,
+        vc = W.recording() and C.good or C.dim, vauto = true,
         help = "Record: live_log.txt records every click, key and what each one changed (attach report.txt, next to "
             .. "the mod, to show a session). Auto report: rewrite dump.txt + report.txt 4 s after each change "
             .. "(off by default; while recording, a report is also written at every game start; Report or Ctrl+F9 "
@@ -1368,6 +1447,51 @@ local function cellText(c, s, col, fill)
     setFill(c, fill)
 end
 
+-- The label is a text in a size box: a fixed column (lpx) or a share of the row (lw).
+local function labelCell(R, spec)
+    if spec.label == nil then setVis(R.cell, COLLAPSED) return end
+    setVis(R.cell, HIT_INVISIBLE)
+    setText(R.label, spec.label)
+    setColor(R.label, spec.lc or C.text)
+    if spec.lpx then
+        setWidth(R.cell, spec.lpx)
+        setFill(R.cell, "auto")
+    else
+        setFill(R.cell, spec.lw or 3)
+    end
+end
+
+local function kindOf(spec)
+    if spec.kind then return spec.kind end
+    return (spec.label == nil and hasButtons(spec)) and "bar" or "item"
+end
+
+-- Each row's kind and colour. The shade alternates down a run of list rows.
+local function shades(rows)
+    local kinds, bgs, n = {}, {}, 0
+    for r, spec in ipairs(rows) do
+        local kind = kindOf(spec)
+        local listed = kind == "item" or kind == "chips"
+        n = listed and n + 1 or 0
+        kinds[r] = kind
+        bgs[r] = (listed and (n % 2 == 0 and C.rowAlt or C.row)) or (kind == "head" and C.head)
+            or (kind == "tabs" and C.strip) or C.window
+    end
+    return kinds, bgs
+end
+
+-- face, edge and text colour of a button
+local function btnColors(b, focused, page)
+    if focused then return C.focus, C.focusEdge, C.dark end
+    if page then                                 -- a tab: the open one has the colour of the page below
+        if b.hl then return page, C.tabOnEdge, C.text end
+        return C.tab, C.tabEdge, C.muted
+    end
+    if b.hl then return C.hl, C.hlEdge, C.text end
+    if b.on then return C.btn, C.btnEdge, C.text end
+    return C.off, C.offEdge, C.dim
+end
+
 local function paint(rows)
     local status, scol = statusLine()
     setText(panel.status, cut(status, 220))     -- wraps to 2 lines
@@ -1376,29 +1500,41 @@ local function paint(rows)
     local help = focusRow and focusRow.help or ""
     if st.kbd or st.view == "settings" then help = help .. (help ~= "" and "\n" or "") .. keysHelp() end
     setText(panel.help, help)
+    local kinds, bgs = shades(rows)
     for r = 1, NROWS do
         local R, spec = panel.rows[r], rows[r]
         if not spec then
             setVis(R.box, COLLAPSED)
         else
             setVis(R.box, SELF_INVISIBLE)
-            setBrush(R.bg, spec.bg or (st.kbd and r == st.row and C.rowFocus) or C.row)
-            cellText(R.label, spec.label, spec.lc or C.text, spec.lw or 3)
-            cellText(R.value, spec.value, spec.vc or C.accent, spec.vw or 3)
-            for j = 1, NBTN do
+            local kind = kinds[r]
+            setBrush(R.bg, spec.bg or (st.kbd and r == st.row and C.rowFocus) or bgs[r])
+            -- a few pixels above the button bars; the tabs stand right on their page
+            setGap(R.box, (r > 1 and kinds[r - 1] ~= kind and kind == "bar") and 4 or 0)
+            labelCell(R, spec)
+            local value = spec.value
+            if value == nil and spec.spacer then value = "" end      -- pushes the buttons after it right
+            cellText(R.value, value, spec.vc or C.accent, spec.vauto and "auto" or (spec.vw or 3))
+            -- the open tab has the colour of the row below it, so it opens onto its page
+            local page = (kind == "tabs" or kind == "subtabs") and (bgs[r + 1] or C.window) or nil
+            -- next to a label or value, in a tab strip or a bar a button is as wide as its caption
+            -- (never cut); a grid of choices shares the width
+            local auto = kind ~= "chips"
+            for j = 1, #R.btns do
                 local B, b = R.btns[j], spec.b and spec.b[j]
                 if not b then
-                    setVis(B, COLLAPSED)
+                    setVis(B.edge, COLLAPSED)
                 else
-                    setVis(B, VISIBLE)
+                    setVis(B.edge, SELF_INVISIBLE)
                     setText(B.cap, b.t)
                     setEnabled(B, b.on)
-                    local focused = st.kbd and r == st.row and j == st.col   -- the focus ring is for keyboard use
-                    setBg(B, focused and C.focus or (b.hl and C.hl) or (b.on and C.btn) or C.off)
-                    setColor(B.cap, focused and C.dark or ((b.on or b.hl) and C.text) or C.muted)
-                    -- next to a label or value a button is as wide as its caption, so the
-                    -- caption is never cut; rows of buttons only share the width
-                    setFill(B, (spec.label or spec.value) and "auto" or (b.w or spec.bw or 1.25))
+                    local strip = b.tab and page or nil
+                    local face, edge, ink = btnColors(b, st.kbd and r == st.row and j == st.col, strip)
+                    setShape(B, strip and (b.hl and "tab" or "tabLow") or "btn")
+                    setBg(B, face)
+                    setBrush(B.edge, edge)
+                    setColor(B.cap, ink)
+                    setFill(B, auto and "auto" or (b.w or spec.bw or 1.25))
                 end
             end
         end
@@ -1413,6 +1549,10 @@ local function render(force)
     elseif st.view == "settings" then settingRows(rows)
     else outfitRows(rows) end
     while #rows > NROWS do table.remove(rows) end
+    for r, spec in ipairs(rows) do                -- a row has as many buttons as its widgets (5, or 6 in row 2)
+        local max = #panel.rows[r].btns
+        while spec.b and #spec.b > max do table.remove(spec.b) end
+    end
     st.rows = rows
     fixFocus(rows)
     paint(rows)

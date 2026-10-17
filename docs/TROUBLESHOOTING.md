@@ -1,10 +1,13 @@
 # Troubleshooting
 
+What to do when something doesn't work, and how to send a report.
+
 - [Quick answers](#quick-answers)
 - [report.txt](#reporttxt)
 - [Session recording](#session-recording)
 - [The watchdog line](#the-watchdog-line)
 - [If the game freezes](#if-the-game-freezes)
+- [If the game crashes](#if-the-game-crashes)
 - [Reporting a problem](#reporting-a-problem)
 
 ## Quick answers
@@ -12,7 +15,7 @@
 | Symptom | What to do |
 |---|---|
 | Delete does nothing | Load a save first (the menu needs a player). Check that `UE4SS.log` says `Mod 'E33Wardrobe' has enabled.txt, starting mod.` and that the folder isn't nested one level too deep ([INSTALL.md](INSTALL.md#1-the-in-game-menu)). If you changed the key in `config.lua`, use that key. |
-| `UE4SS.log` says "This UE4SS build is too old for E33Wardrobe" | Install a newer UE4SS: the experimental build from December 2025 or later ([INSTALL.md](INSTALL.md#1-the-in-game-menu)). Older builds have no safe way to run the mod's work on the game thread, so the mod stays off. |
+| `UE4SS.log` says "This UE4SS build is too old for E33Wardrobe" | Install a newer UE4SS: the experimental build from December 2025 or later; 3.0.1-1176 or newer is recommended ([INSTALL.md](INSTALL.md#1-the-in-game-menu)). Older builds have no safe way to run the mod's work on the game thread, so the mod stays off. |
 | The menu key also reloads Blueprint mods | You set the menu to Insert, which UE4SS's BPModLoaderMod also uses. Pick another key ([USAGE.md](USAGE.md#changing-keys-and-outfit-names)). |
 | The app won't start, or Windows warns about it | The app isn't signed, so SmartScreen asks once: **More info > Run anyway**. Extract the whole zip first; don't run it from inside the zip. |
 | The menu says "No outfit mods relocated yet." | Drop the mod on the app ([APP.md](APP.md)), or run the relocator ([RELOCATOR.md](RELOCATOR.md)), then press **Reload files** in the menu. |
@@ -67,8 +70,9 @@ While recording is on, a watchdog writes
 
 - State `idle`: the mod wasn't doing anything when the game stopped. The stall is in the game or
   engine. During a long loading screen this is normal.
-- Another state (`mod work`, `dump`, …): the game stopped while the mod was working. The log lines
-  just before (`loading …`, `mesh set …`) name the call.
+- Another state (`mod work`, `dump`, …): the game stopped while the mod was working. The next
+  line, `WATCHDOG: last mod step: …`, names the call it was making, and the `step` lines after it
+  show the steps before (settings.txt `trace = true`, the default).
 - **No** watchdog line during a freeze: UE4SS's background thread was stuck too, or the process
   died. Only a process dump can tell more.
 
@@ -80,22 +84,39 @@ Before you close the game:
 2. Press Delete twice and wait 5 s. The mod's game-thread loop writes key presses to
    `live_log.txt`: `key DEL` lines appear only if that loop still runs. If they don't, the game
    thread is stuck.
-3. Task Manager > Details > right-click `SandFall-Win64-Shipping.exe` (Game Pass:
-   `SandFall-WinGDK-Shipping.exe`) > **Create dump file**. Keep
-   the `.DMP` file it names: it shows where every thread is stuck.
-4. Copy `ue4ss\UE4SS.log` and `Mods\E33Wardrobe\live_log.txt` **before starting the game again**:
+3. Task Manager > Details: note the CPU % of `SandFall-Win64-Shipping.exe` (Game Pass:
+   `SandFall-WinGDK-Shipping.exe`). About one core's worth means a loop; about 0 means it waits.
+4. Optional, a small dump (tens of MB instead of Task Manager's full 16 GB): download
+   [ProcDump](https://learn.microsoft.com/en-us/sysinternals/downloads/procdump), and in a command
+   prompt in its folder run
+   `procdump64.exe -accepteula -mm -n 2 -s 5 SandFall-Win64-Shipping.exe %USERPROFILE%\Desktop`.
+   It writes two small dumps 5 s apart to the desktop.
+5. Copy `ue4ss\UE4SS.log` and `Mods\E33Wardrobe\live_log.txt` **before starting the game again**:
    UE4SS overwrites its log at every start.
 
 To make freezes less likely, use the recommended UE4SS settings in
 [INSTALL.md](INSTALL.md#1-the-in-game-menu) (hot reload off, GUI closed).
+
+## If the game crashes
+
+When the game closes with a crash message, UE4SS has written `ue4ss\crash_<date>.dmp`. Before you
+start the game again:
+
+1. Copy `ue4ss\UE4SS.log`, `Mods\E33Wardrobe\live_log.txt` and the newest `crash_*.dmp` to another
+   folder. A new start overwrites UE4SS.log and moves live_log.txt to `live_log_previous.txt`.
+2. Send the logs (see below). Send the `.dmp` only when asked: it contains memory of the game's
+   process.
+
+`[CrashDump] FullMemoryDump = 1` in `UE4SS-settings.ini` makes UE4SS write a full dump (several GB,
+and the game looks frozen for minutes while it is written). Leave it at 0 unless asked for one.
 
 ## Reporting a problem
 
 Open an issue on GitHub, or post in the Bugs tab of the Nexus Mods page, with:
 
 - what you did and what you expected;
-- your E33 Wardrobe and UE4SS versions, and Steam or Game Pass;
+- your E33 Wardrobe and UE4SS versions (the first line of `UE4SS.log`), and Steam or Game Pass;
 - the mods you relocated;
 - from the app: **Copy problems** on the Game log tab, pasted into the post;
-- `report.txt` (checked for personal paths first). For a freeze, also the copied `UE4SS.log`; the
-  `.DMP` file only when asked (it is large and contains memory of your PC's process).
+- `report.txt` (checked for personal paths first). For a freeze or crash, also the copied
+  `UE4SS.log`; a `.dmp` file only when asked (it is large and contains memory of your PC's process).

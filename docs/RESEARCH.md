@@ -22,7 +22,8 @@ Wardrobe, with sources. The design built on it is described in [HOW_IT_WORKS.md]
   open-source E33 Randomizer [R11]. Parsed with [`research/usmap.py`](../research/usmap.py) and
   `tools/e33legacy.py`.
 - **Live game state**: the mod's own `dump.txt`, which lists every character actor's components,
-  meshes, materials, texture and scalar parameters, and the session logs of about ten test
+  meshes, animation (`anim=` the class it is set up with, `instance=` and `mode=` what animates it
+  now), materials, texture and scalar parameters, and the session logs of about ten test
   sessions on the Steam version with UE4SS 3.0.1-1125-g527a483b.
 - **UE4SS behaviour**: the RE-UE4SS source at the tested build [R3] and its issue tracker [R4, R5].
 - **Other mods**: their mod pages, and for the blood/dirt mods their published files

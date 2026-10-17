@@ -171,6 +171,11 @@ try:
           p and p['level'] == 'warn' and p['count'] == 1 and p['title'] == 'The game stopped responding for 36 s', p)
     check('  detail names the state and the last step',
           p and 'apply pass (after map load)' in p['detail'] and 'SK_Lune_Clea' in p['detail'], p and p['detail'])
+    g.live(66, 'WATCHDOG: last mod step: StaticFindObject /Game/Characters/Heros/Sciel/ZW1/SK_Sciel_Chic_skin')
+    m.poll_once()
+    p = keys(m).get('watchdog-work')
+    check('  the breadcrumb line names the call it was making',
+          p and 'The call it was making: StaticFindObject' in p['detail'] and 'apply pass' in p['detail'], p and p['detail'])
     check('  its lines: the three WATCHDOG lines of that stall', p and len(p['lines']) == 3
           and all('WATCHDOG' in x for x in p['lines']) and p['lines'][0].startswith(hms(66)), p and p['lines'])
     g.live(100, f'WATCHDOG: the game thread has not run for 7 s; mod state: idle (since {hms(93)})')
@@ -182,6 +187,19 @@ try:
     m.poll_once()
     p = keys(m)['watchdog-idle']
     check('  a second, long idle stall: count 2, warn', p['count'] == 2 and p['level'] == 'warn' and '31 s' in p['title'], p)
+    g.live(119, 'WATCHDOG: the game thread ran again after 32 s')
+    m.poll_once()
+    p = keys(m)['watchdog-idle']
+    check('  the game went on afterwards: "paused, then went on", info, not a freeze',
+          p['title'] == 'The game paused for 32 s, then went on' and p['level'] == 'info'
+          and 'not a freeze' in p['detail'] and p['count'] == 2, p)
+    check('    the work stall keeps its warning', keys(m)['watchdog-work']['level'] == 'warn')
+    # the mod writes the breadcrumb after idle stalls too: it must not land on the older work stall
+    g.live(120, 'WATCHDOG: last mod step: skin class check')
+    m.poll_once()
+    check('    a breadcrumb after an idle stall leaves the older work stall\'s detail alone',
+          'StaticFindObject' in keys(m)['watchdog-work']['detail']
+          and 'skin class check' not in keys(m)['watchdog-work']['detail'], keys(m)['watchdog-work']['detail'])
 
     # ------------------------------------------------------------------ UE4SS.log errors
     g.ue(120, 'Ref was not function')

@@ -24,7 +24,8 @@ switches between them while you play.
 ## Install
 
 1. Install [UE4SS](https://www.nexusmods.com/clairobscurexpedition33/mods/630), file
-   "UE4SS - Experimental (Newer)".
+   "UE4SS - Experimental (Newer)". Tested with 3.0.1-1125 and 3.0.1-1176 (the first line of
+   `UE4SS.log` names your build); the optional "Test: game dresses (B)" setting needs 1176 or newer.
 2. Download `E33Wardrobe-App-<version>.zip` from
    [Releases](https://github.com/alphamr123/e33-wardrobe/releases), extract it and run
    `E33 Wardrobe.exe`. The Setup tab finds the game and installs the in-game menu.

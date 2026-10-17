@@ -1,5 +1,117 @@
 # Changelog
 
+What changed in each version, newest first.
+
+## 1.3.1
+
+Recommended UE4SS build: 3.0.1-1176 or newer (the first line of UE4SS.log says which one you
+have). 1125 still runs the menu; "Test: game dresses (B)" needs 1176.
+
+In-game menu, crashes and freezes:
+- Crash at camp right after a fast travel (twice on 17 Oct, UE4SS 1176): UE4SS crashed inside its
+  property cache while the mod read a camp character's "Face" by name. The likely cause: camp
+  Blueprints are loaded again on each visit, and UE4SS hands back a property of the freed one. The
+  mod now finds a character's parts through the game's own component list, by their names, and
+  reads parts by property only on outfit actors (their parts belong to the walking character).
+  Also: nothing is read from an object whose class is loading or being removed, and a map that
+  loads within 30 s of the previous one gets 6 s before the mod dresses anyone. Not yet confirmed
+  in game.
+- No longer touches a character that the game has already removed (seen a second after a
+  battle, as "change None" in the log). Writing to it could corrupt memory.
+- Never calls a method on an object UE4SS returns as "invalid" (a missing owner, parent or
+  property). Inside UE4SS that is an access violation the mod can't catch. Eight such places were
+  found and guarded, among them the character-name lookup in the first look at a new character,
+  where earlier freezes stopped.
+- When the game re-assigns a character's outfit at the start of a battle, the mod no longer reads
+  the character's skin component (it can point to an object the game already freed).
+- Reads a property by name only when the class says it is a plain object reference (or a name,
+  number or yes/no value). A character's "Face" property is a weak reference, which UE4SS reads
+  wrongly and crashes on (UE4SS issue #1433).
+- Checks more than UE4SS's "valid": an object being destroyed, already garbage or still loading
+  is not read or changed. It is looked at again later.
+- Looks at new characters about 1 second after they appear and again 2 seconds later, never on
+  the frame they appear, and leaves them to the map-load pass for 3 seconds after a map loads.
+  New characters and that pass wait until the game is calm (no burst of new actors and no long
+  frame in the last half second, at most 10 seconds).
+- Leaves cutscene actors of no party character (Esquie, for example) alone, and Fix look leaves
+  cutscene characters alone (re-dressing them during a dialogue could stop it from showing).
+- Forgets objects of the previous map on every map load, so a new object at a reused address is
+  never mistaken for an old one.
+- A new map is also noticed through the game state starting, not only through UE4SS's LoadMap
+  hook, so `HookLoadMap = 0` in UE4SS-settings.ini can be tested.
+
+In-game menu, outfits:
+- Battle and companion characters are dressed as soon as they appear. Before, no battle character
+  was looked at until a pass had seen one, and no pass runs when a battle starts.
+- Party members walking behind the leader get their outfit back after a battle without Fix look:
+  every 2 seconds the mod checks them and dresses any whose body changed (nothing to do when
+  nothing changed).
+- Wear stops re-dressing a character when the game puts its own body back 3 times in a row
+  within seconds (copies the game keeps for scenes; it caused stutter). It tries again after 30 s.
+- An actor whose character can't be told counts as the character whose relocated mesh it shows.
+  The walking character's body no longer flips between the game's mesh and the worn one.
+- An outfit mesh with empty skin slots now gets the character's own skin material when the
+  previous outfit's was another character's (Sciel's Chic outfit is a Lune mesh, so her lower body
+  had Lune's skin tone): of the candidates, the one the mod's textures fit best.
+- Colour-variant mods: textures the parent material shows too are no longer put back on every look
+  (needless material rebuilds, up to 6 per character).
+- Settings > "Test: game dresses (B)", off by default (experimental, needs UE4SS 1176): the game is
+  given the worn variant's own outfit Blueprint when it dresses a character. 2 s after a swap the
+  character's body is checked; a body without a mesh stops swaps to that Blueprint for the session.
+- In-game menu: classic look like the desktop app (title bar, classic tabs, square buttons,
+  aligned value column, status bar). Same pages, buttons and keys.
+- `scene_copies = false` in settings.txt leaves alone the copies the game dresses for dialogue and
+  battle.
+
+In-game menu, speed:
+- Mod assets are found with the engine's GetAsset instead of UE4SS's StaticFindObject first: each
+  miss cost 13-27 ms, most of the 150-360 ms looks.
+- Within one frame the mod keeps what it has already read (texture lists, mesh paths, property
+  types): a first look at a new character takes about half the engine calls, the pass after a map
+  load about a quarter.
+- New characters get about 8 ms of the mod's time per frame; the four party-menu characters took
+  95-309 ms each, all in one frame, after every map load.
+- The check the mod runs for every actor the game creates (thousands a minute in battle) reads
+  each class's name once instead of once per actor.
+- Run-time named components are no longer looked up as Blueprint templates.
+
+In-game menu, logs (live_log.txt, report.txt):
+- Freeze trace: before each engine call that could hang, the mod notes what it is about to do. If
+  the game thread stops, the watchdog writes the last 40 steps, ending with the call that never
+  returned; "the game thread ran again after N s" says it was a stall, not a freeze.
+  `trace = false` in settings.txt turns it off.
+- `hitch:` lines for long frames with the mod's work just before, "slow look" lines over 100 ms,
+  and a `stats` line every minute (including the time spent on every actor the game creates).
+- `scene:` lines when battle, cutscene and dialogue actors appear; "game spawned ... for <actor>"
+  names what each new character belongs to; "new skin" lines say which mesh it shows, and a new
+  skin that isn't looked at says why.
+- dump.txt shows each skeletal mesh's running animation class and mode.
+- commands.txt next to the mod: its lines (console words, pick, wear, set) are run about once a
+  second and logged.
+
+Relocator:
+- Mods whose internal links differ from their own file names only in letter case now prepare
+  completely. The game ignores the case, but the converter didn't, and such links were lost (a
+  multi-outfit Sciel mod's outfit Blueprints showed no body). Links to game files are never
+  changed. Reinstall such a mod to get the fix.
+- Reinstall of a disabled mod failed with "Access is denied" on Windows. Fixed.
+
+App:
+- Game log: a "last step" line after a stall while the menu was idle no longer changes the details
+  of an earlier stall.
+
+Known, not fixed:
+- After "All off", menu characters can show the game's version of the worn mesh until the game
+  re-dresses them (Fix look, reopening the menu).
+
+For developers:
+- scripts/collect_crash.py (moves the newest crash dump and copies the logs into one folder, with
+  a first reading), scripts/analyze_dump.py (names UE4SS frames with Windows' dbghelp when
+  llvm-symbolizer is missing; all threads), scripts/dump_threads.py, scripts/gen_index.py,
+  tests/sabotage.py (break a line, run a suite, restore), tests/perf/count_crossings.py.
+- The test suites no longer fail when the game is running on the same PC.
+- The Tools zip ships a fixed list of docs.
+
 ## 1.3.0
 
 The fix tools below are experimental: check the result in game; every fix can be undone.
@@ -63,9 +175,9 @@ App:
 
 In-game menu:
 - Fixed grey bodies from outfit mods whose mesh leaves a material slot empty for the game to fill
-  (Cheeki's Sciel). When such a mesh is worn, an empty slot gets the body's own material (same slot
-  name, else the skin material), with the mod's textures named like the body's ones
-  ("body_high_BaseColor-nude") on it. live_log.txt says what filled each slot.
+  (a Sciel outfit mod). When such a mesh is worn, an empty slot gets the body's own material (same
+  slot name, else the skin material), with the mod's textures named like the body's ones on it.
+  live_log.txt says what filled each slot.
 
 Relocator:
 - Texture sizes come from the texture header when the full read fails (colour-only options showed

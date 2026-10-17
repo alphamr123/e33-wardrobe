@@ -27,13 +27,14 @@ THREAD, OFFTHREAD = "load", {}
 local function eng(name) if THREAD ~= "game" and THREAD ~= "load" then table.insert(OFFTHREAD, THREAD .. ":" .. name) end end
 function ExecuteInGameThread(f) local o, og = THREAD, IN_GT; THREAD = "game"; IN_GT = true; f(); THREAD = o; IN_GT = og end
 local PAINT = { SetText = true, SetVisibility = true, SetColorAndOpacity = true, SetBackgroundColor = true,
-                SetIsEnabled = true, SetBrushColor = true, SetSize = true }
+                SetIsEnabled = true, SetBrushColor = true, SetSize = true, SetPadding = true, SetWidthOverride = true }
 local WADDR = 500000
 local WMT = {}
 local function slot(parent, child)
   local s = { _parent = parent, _child = child, _calls = {} }
   return setmetatable(s, { __index = function(t, k)
-    return function(self, ...) table.insert(self._calls, { k, ... }); return nil end end })
+    if k == "IsValid" then return function() return true end end
+    return function(self, ...) if PAINT[k] then CALLS.paint = CALLS.paint + 1 end; table.insert(self._calls, { k, ... }); return nil end end })
 end
 local function adopt(self, child) child._parent = self; table.insert(self._children, child); local s = slot(self, child); child._slot = s; return s end
 local methods = {
@@ -55,12 +56,18 @@ local methods = {
 }
 WMT.__index = function(t, k)
   if type(k) ~= "string" or k:sub(1, 1) == "_" then return nil end
+  -- a widget that is gone reads as an invalid object: only IsValid / GetAddress are safe on it
+  if rawget(t, "_dead") and k ~= "IsValid" and k ~= "GetAddress" then AVHIT(k) end
   local m = methods[k]
   if m then
     if k == "IsValid" or k == "GetAddress" then return m end
     return function(...) eng(k); if PAINT[k] then CALLS.paint = CALLS.paint + 1 end; return m(...) end
   end
-  return function(self, ...) eng(k); table.insert(self._calls, { k, ... }); return nil end
+  return function(self, ...) eng(k); if PAINT[k] then CALLS.paint = CALLS.paint + 1 end; table.insert(self._calls, { k, ... }); return nil end
+end
+WMT.__newindex = function(t, k, v)
+  if rawget(t, "_dead") and type(k) == "string" and k:sub(1, 1) ~= "_" then AVHIT(k) end
+  rawset(t, k, v)
 end
 local function widget(kind, outer, name)
   WADDR = WADDR + 1
@@ -124,14 +131,25 @@ local function shownIn(w, h)
   if x._vis == 1 then return false end
   return h ~= nil and h.WidgetTree ~= nil and h.WidgetTree.RootWidget == x
 end
+-- A row is a horizontal box: its first cell holds the label (a text, maybe in a size box), the first
+-- text directly in it is the value, and each button may sit in a border (its edge).
+function rowOf(w) local x = w; while x and x._kind ~= "HorizontalBox" do x = x._parent end; return x end
+function cellOf(w) local x = w; while x._parent and x._parent._kind ~= "HorizontalBox" do x = x._parent end; return x end
+local function textIn(w)
+  if w._kind == "TextBlock" then return w end
+  if w._kind == "Button" then return nil end
+  for _, c in ipairs(w._children) do local t = textIn(c); if t then return t end end
+end
+local function shownText(cell) if not cell or cell._vis == 1 then return nil end; local t = textIn(cell); return t and t._text end
 function screen()
   local h = host(); local out = {}
   if not h or h._vis == 1 then return out end
   for _, w in ipairs(UMGW) do
     if w._kind == "Button" and shownIn(w, h) then
-      local hb = w._parent; local lab, val = hb._children[1], hb._children[2]
+      local hb = rowOf(w); local val
+      for _, c in ipairs(hb._children) do if c._kind == "TextBlock" then val = c break end end
       out[#out + 1] = { w = w, cap = w._children[1]._text, enabled = w._en ~= false, bg = w._bg,
-                        label = (lab._vis ~= 1) and lab._text or nil, value = (val._vis ~= 1) and val._text or nil }
+                        label = shownText(hb._children[1]), value = shownText(val) }
     end
   end
   return out
@@ -160,12 +178,23 @@ function focused()  -- the button painted with the focus colour (the one colour 
   for bg, n in pairs(count) do if n == 1 and bg.R > 0.9 then return byBg[bg] end end
 end
 function sameBg(a, b) return a.bg == b.bg end
+function openTab(cap)  -- the open tab: its face differs from every other button in its strip
+  local b = findBtn(cap); if not b then return false end
+  local row, others = rowOf(b.w), 0
+  for _, o in ipairs(screen()) do
+    if o.w ~= b.w and rowOf(o.w) == row then
+      if sameBg(o, b) then return false end
+      others = others + 1
+    end
+  end
+  return others > 0
+end
 function autoSized(cap, label)
-  local b = findBtn(cap, label); local c = b and lastCall(b.w._slot, 'SetSize')
+  local b = findBtn(cap, label); local c = b and lastCall(cellOf(b.w)._slot, 'SetSize')
   return c ~= nil and c[2].SizeRule == 0
 end
 function sameRow(a, b) return rowBrush(a) == rowBrush(b) end
-function rowBrush(label) for _, b in ipairs(screen()) do if b.label and b.label:find(label, 1, true) then return b.w._parent._parent._brush end end end
+function rowBrush(label) for _, b in ipairs(screen()) do if b.label and b.label:find(label, 1, true) then return rowOf(b.w)._parent._brush end end end
 function lastCall(w, name) for i = #w._calls, 1, -1 do if w._calls[i][1] == name then return w._calls[i] end end end
 '''
 
@@ -291,13 +320,15 @@ def main():
           (G.PC.bShowMouseCursor, G.LOOKIGN))
     check('  widget is on the viewport at a high Z order', G.host()._z == 9000)
     tf = [w for w in G.UMGW.values() if w._kind == 'TextBlock']
-    check('  text sizes set before the widget is shown', all(w.Font.Size < 24 for w in tf[1:]) and tf[0].Font.Size == 20)
+    check('  text sizes set before the widget is shown', all(w.Font.Size < 24 for w in tf) and tf[0].Font.Size == 14,
+          [w.Font.Size for w in tf[:3]])
     caps = [b.cap for b in G.screen().values()]
     check('tabs shown, with Peek', all(c in caps for c in ('Outfits', 'Presets', 'Settings', 'Peek', 'Close')), caps)
     check('one tab per character; the loaded one plain, the others marked "-"',
           all(c in caps for c in ('Lune', 'Maelle -', 'Sciel -', 'All')), caps)
     check('it opens on the first character on screen (Lune) and says what Lune wears',
-          G.sameBg(G.findBtn('Lune'), G.findBtn('Outfits')) and 'Lune wears\nChic' in screen_text(), screen_text()[:300])
+          G.openTab('Lune') and G.openTab('Outfits') and not G.openTab('Maelle -')
+          and 'Lune wears\nChic' in screen_text(), screen_text()[:300])
     check('slot rows: short name without the character, value "off"', G.rowValue('Outfit · CC') == 'off',
           (labels(), G.rowValue('Outfit · CC')))
     check('relocator labels shortened: mod prefix dropped from the slot name', 'Prefixed slot · CC' in labels()
@@ -373,8 +404,8 @@ def main():
           and 'wear = CC/Herald' in settings(), (mesh(), settings()))
     click('Unwear', 'Herald')
     click('Off', 'Herald')
-    check('buttons next to text are as wide as their captions (never cut)', G.autoSized('Choose', 'Outfit · CC')
-          and not G.autoSized('Outfits'))
+    check('buttons next to text, and tabs, are as wide as their captions (never cut)', G.autoSized('Choose', 'Outfit · CC')
+          and G.autoSized('Outfits') and G.autoSized('Lune'))
 
     # ---- chooser
     click('Choose', 'Outfit · CC')
@@ -385,6 +416,8 @@ def main():
           and not G.sameBg(G.findBtn('Sleeveless'), G.findBtn('Sleeves · boots')),
           sel())
     check("  Off (game's own) is there", G.findBtn("Off (game's own)").enabled)
+    check('  the variant names share the row\'s width (a grid)', not G.autoSized('Sleeveless')
+          and not G.autoSized('Sleeves · boots'))
     check('  no Wear for a pick that already shows on what Lune wears',
           not any(b.cap.startswith('Wear') for b in G.screen().values()), [b.cap for b in G.screen().values()])
     click('Back')
@@ -795,6 +828,7 @@ def main():
     key('C+F8')
     check('a look saved before a slot was split per character moves to that character\'s slot (others dropped)',
           favs() == [('Lune', 'Costume', 'K/main@Lune', 'K/a@Lune')], favs())
+    base.av_check(check, [L])
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

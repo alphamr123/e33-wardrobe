@@ -22,10 +22,7 @@ MAIN = sys.argv[1] if len(sys.argv) > 1 else base.MAIN
 REAL = r'''
 THREAD = "load"; OFFTHREAD = {}
 local function eng(name) if THREAD ~= "game" and THREAD ~= "load" then table.insert(OFFTHREAD, THREAD .. ":" .. name) end end
-INVALID = setmetatable({}, { __index = function(_, k)
-    if k == "IsValid" then return function() return false end end
-    return INVALID end,
-  __call = function() error("Tried calling a member function but the UObject instance is nullptr") end })
+INVALID = NULLOBJ()          -- the base mock's invalid object: anything but IsValid / GetAddress counts in AV
 -- R1: UFunction TArray return value = plain table of params
 function PARAMS(items)
   local t = {}
@@ -117,6 +114,9 @@ def main():
     check('color variant retextures Body (named component)', tex_of(body).startswith('/Game/Characters/ZWCOLOR01/'), tex_of(body))
     check('color variant retextures extra component found via K2_GetComponentsByClass',
           tex_of(G.ACC).startswith('/Game/Characters/ZWCOLOR01/'), tex_of(G.ACC))
+    lv = open(os.path.join(tmp, 'E33Wardrobe', 'live_log.txt'), encoding='utf-8').read()
+    check('  its change line names it by its own name (read only for components not seen yet)',
+          '.Acc: mat0 texture' in lv, [x for x in lv.splitlines() if 'mat0 texture' in x])
     cmd(None, t(['2', 'off']))
 
     cmd(None, t(['4', '1']))                                   # skin Blueprint override
@@ -132,7 +132,7 @@ def main():
       local a2 = new("BP_Lune_Skin_Chic_C", "/Game/Map.PersistentLevel.BP_Lune_Skin_Chic_C_2", { Body = body2 }, { K2_GetComponentsByClass = function() return PARAMS({ body2 }) end })
       a2._class = ACTORS[1]._class; a2._skin = "BP_CharacterSkinBase_C"; table.insert(ACTORS, a2); NEWBODY = body2
       THREAD = "game"; BEGINPLAY({ get = function() return a2 end }); THREAD = "load"
-      runDelayed()
+      runDelayed(); tickGT(20)   -- new skins are looked at ~1 s after they appear
     ''')
     check('new actor gets selection on spawn', L.eval('NEWBODY._mesh._path').startswith('/Game/Characters/ZWOUTFITA/'), L.eval('NEWBODY._mesh._path'))
     n = G.FINDALL
@@ -141,6 +141,7 @@ def main():
     off = list(G.OFFTHREAD.values())
     check('no engine call off the game thread', not off, off)
     check('delayed work scheduled on the game thread (no Lua on the async thread)', G.ASYNCRUNS == 0, f'{G.ASYNCRUNS} async callbacks')
+    base.av_check(check, [L])
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

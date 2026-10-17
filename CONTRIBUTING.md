@@ -1,5 +1,7 @@
 # Contributing
 
+How to report a bug, add rules for a mod, or send a code change.
+
 Thanks for helping. Bug reports, rules files for more mods, and code are all welcome.
 
 ## Reporting a bug

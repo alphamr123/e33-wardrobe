@@ -336,6 +336,9 @@ RULES = [
     # live_log.txt (the session recorder's own lines)
     Rule('live', 'WATCHDOG', r'^WATCHDOG: the game thread has not run for (?P<s>\d+) s; mod state: (?P<state>.+?)'
          r'(?: \(since (?P<since>[\d:]+)\))?$', special='_watchdog'),
+    Rule('live', 'WATCHDOG: last mod step', r'^WATCHDOG: last mod step: (?P<step>.+)$', special='_watchdog_step'),
+    Rule('live', 'WATCHDOG: the game thread ran again', r'^WATCHDOG: the game thread ran again after (?P<s>\d+) s$',
+         special='_watchdog_resumed'),
     Rule('live', 'Auto Wear: ', r"^Auto Wear: (?P<slot>.+) doesn't fit what (?P<char>.+?) wears; worn in place of it",
          special='_autowear'),
     Rule('live', 'empty (the mod', r'^change \S+ \[(?P<char>[^\]]*)\]\.\S+: mat\d+ texture (?P<param>.+?): empty '
@@ -989,6 +992,7 @@ class Monitor:
         secs, state, since = int(m.group('s')), m.group('state').strip(), m.group('since') or ''
         idle = state == 'idle'
         key = 'watchdog-idle' if idle else 'watchdog-work'
+        self._wd_key = key
         p = self.problems.get(key)
         if p and p['_v'].get('since') == since and since:
             p['last'] = _hms(dt)            # the same stall, still going: not another one
@@ -1007,13 +1011,38 @@ class Monitor:
             else:
                 step = f' Its last step: {_short(self._last_step, 140)}.' if self._last_step else ''
                 p['detail'] = f'It happened while the menu was working ({state}).{step}'
-                p['hint'] = ('If the game is frozen: before closing it, create a dump file in Task Manager '
-                             "(see 'If the game freezes' in the guide), then send report.txt.")
+                p['hint'] = 'If the game is frozen: close it, start it once and send report.txt.'
         mx = p['_v']['max']
         p['title'] = f'The game stopped responding for {mx} s'
         p['level'] = 'warn' if (not idle or mx >= 30) else 'info'
         if not idle:
             self._work(time.monotonic(), state)
+        return True
+
+    def _watchdog_resumed(self, m, text, src, dt):
+        # the game went on after the stall (PC: battle and map loads stop it for 5-6 s)
+        p = self.problems.get(getattr(self, '_wd_key', None) or '')
+        if p is None:
+            return True
+        secs = int(m.group('s'))
+        p['title'] = f'The game paused for {secs} s, then went on'
+        self._add_lines(p)
+        if p['key'] == 'watchdog-idle':
+            p['level'] = 'info'
+            p['detail'] = ('The menu was idle and the game went on by itself, so it was not a freeze. '
+                           'Loading screens do this.')
+            p['hint'] = 'Nothing to do.'
+        return True
+
+    def _watchdog_step(self, m, text, src, dt):
+        # the in-game menu's breadcrumb: the engine call it was making when the game stopped
+        # only for a stall while it worked: after an idle one this line belongs to that one
+        p = self.problems.get('watchdog-work') if getattr(self, '_wd_key', None) == 'watchdog-work' else None
+        if p is not None:
+            step = m.group('step').strip()
+            p['detail'] = (p.get('detail', '').split(' The call it was making:')[0]
+                           + f' The call it was making: {_short(step, 140)}.')
+            p['hint'] = 'Send report.txt: it has the steps before the stop.'
         return True
 
     def _autowear(self, m, text, src, dt):

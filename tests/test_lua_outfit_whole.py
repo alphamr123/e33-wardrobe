@@ -60,7 +60,7 @@ asset("SkeletalMesh", "/Game/Characters/ZWLIGHT/Body/SK_Lune_Placeholder", "SK_L
 -- a mod body material whose base colour points at a texture nobody shipped (PC: Lune showed grey)
 asset("MaterialInstanceConstant", "/Game/Characters/ZWGREY/Body/MI_Body_Mod", "MI_Body_Mod",
   { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("BaseColor") },
-      ParameterValue = setmetatable({}, { __index = function(_, k) if k == "IsValid" then return function() return false end end end }) } }) })
+      ParameterValue = NULLOBJ() } }) })
 asset("Texture2D", "/Game/Characters/ZWGREY/Chic/T_Chic_D-mod", "T_Chic_D-mod")
 asset("SkeletalMesh", "/Game/Characters/ZWGREY2/Body/SK_Lune_Bikini_C_Skin", "SK_Lune_Bikini_C_Skin",
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY/Body/MI_Body_Mod.MI_Body_Mod") } }) })
@@ -77,10 +77,24 @@ asset("SkeletalMesh", "/Game/Characters/ZWGREY3/Body/SK_Lune_Bikini_D_Skin", "SK
                          { MaterialSlotName = FName("Body") },
                          { MaterialSlotName = FName("Extra") } }) })
 asset("Texture2D", "/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude", "T_Chic_D-nude")
+-- PC 17 Oct: Sciel's Chic outfit is a Lune mesh, so "the body's skin material" was Lune's; the
+-- game's own version of the mod's mesh has the character's skin material, whose textures the mod
+-- replaces (body_other_D -> body_other_D-alt)
+asset("Texture2D", "/Game/Characters/Lune/Body/body_other_D", "body_other_D")
+asset("MaterialInstanceConstant", "/Game/Characters/Lune/Body/MI_Body_Other", "MI_Body_Other",
+  { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("Color_MAIN") },
+      ParameterValue = get("/Game/Characters/Lune/Body/body_other_D.body_other_D") } }) })
+asset("SkeletalMesh", "/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_G_Skin", "SK_Lune_Bikini_G_Skin",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod.MI_Bikini_Mod"), MaterialSlotName = FName("Bikini") },
+                         { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Other.MI_Body_Other"), MaterialSlotName = FName("Skin_Other") } }) })
+asset("SkeletalMesh", "/Game/Characters/ZWGREY6/Body/SK_Lune_Bikini_G_Skin", "SK_Lune_Bikini_G_Skin",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod.MI_Bikini_Mod"), MaterialSlotName = FName("Bikini") },
+                         { MaterialSlotName = FName("Skin_Other-alt") } }) })
+asset("Texture2D", "/Game/Characters/ZWGREY6/Body/body_other_D-alt", "body_other_D-alt")
 -- rules chosen in the app (fixes.json -> v.fix): a texture for an empty link, a material for a slot
 asset("MaterialInstanceConstant", "/Game/Characters/ZWGREY4/Body/MI_Body_Mod4", "MI_Body_Mod4",
   { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("BaseColor") },
-      ParameterValue = setmetatable({}, { __index = function(_, k) if k == "IsValid" then return function() return false end end end }) } }) })
+      ParameterValue = NULLOBJ() } }) })
 asset("SkeletalMesh", "/Game/Characters/ZWGREY4/Body/SK_Lune_Bikini_E_Skin", "SK_Lune_Bikini_E_Skin",
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY4/Body/MI_Body_Mod4.MI_Body_Mod4") } }) })
 asset("Texture2D", "/Game/Characters/ZWGREY4/Chic/T_Chic_D-mod", "T_Chic_D-mod")
@@ -143,6 +157,11 @@ VARIANTS = r'''return {
         fix = { mat = { ["/game/characters/lune/customization/skin/sk_lune_bikini_f_skin|1"] = "hide",
                         -- a rule naming something that isn't a material is ignored (never set on a slot)
                         ["/game/characters/lune/customization/skin/sk_lune_bikini_f_skin|2"] = "/Game/Characters/ZWGREY4/Body/T_Picked" } } } } } } },
+  { mod = "Grey6", slots = {
+    { id = "G6/main", label = "Grey6: Lune outfit", character = "Lune", variants = {
+      { id = "G6/a", label = "A", map = {
+        ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_G_Skin"] = { "/Game/Characters/ZWGREY6/Body/SK_Lune_Bikini_G_Skin", "SK_Lune_Bikini_G_Skin", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/body_other_D-alt"] = { "/Game/Characters/ZWGREY6/Body/body_other_D-alt", "body_other_D-alt", "Texture2D" } } } } } } },
   -- one costume for two characters (PC: "Altered Flower Suit Costume", Lune + Maelle + Sciel):
   -- the slot is tied to nobody; each mesh's path says whose it is
   { mod = "Costume", slots = {
@@ -159,6 +178,9 @@ TEX_MOD = '/Game/Characters/ZWCOLOR01/Chic/T_Chic_D.T_Chic_D'
 TEX_OUTFIT = '/Game/Characters/ZWOUTTEX/Chic/T_Chic_D.T_Chic_D'
 
 
+RUNTIMES = []                   # every Lua state made, for the access-violation check at the end
+
+
 def run(settings, selection=None):
     tmp = tempfile.mkdtemp(prefix='e33whole_')
     mod = os.path.join(tmp, 'E33Wardrobe')
@@ -171,6 +193,7 @@ def run(settings, selection=None):
     if selection:
         open(os.path.join(mod, 'selection.txt'), 'w').write(selection)
     L = lua54.LuaRuntime(unpack_returned_tuples=True)
+    RUNTIMES.append(L)
     L.execute(base.MOCK)
     body, _actor = L.execute(base.SCENARIO)
     L.execute(EXTRA)
@@ -393,6 +416,31 @@ def main():
     check('  Wear off: Chic with its own texture again', mesh() == CHIC and tex() == TEX_VANILLA, (mesh(), tex()))
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
+    # PC 17 Oct: the body's skin material belonged to another character (Sciel's Chic is a Lune
+    # mesh), none of the mod's textures fit it, and the body showed the wrong skin tone
+    tmp, mod, L, G, W, mesh, tex = run('')
+    gi = [x.id for x in W.slots().values()].index('G6/main') + 1
+    W.setVariant(gi, 1)
+    G.settle()
+    G.tickGT(40)
+    body = L.eval('function() return ACTORS[1].Body end')()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    s1 = L.eval('''function(b, i)
+        local m = b:GetMaterial(i)
+        if not m then return "nil" end
+        local base = (m._p.Parent and m._p.Parent._path) or m._path
+        local tex
+        local ok, arr = pcall(function() return m.TextureParameterValues end)
+        if ok and arr then arr:ForEach(function(_, e) tex = e:get().ParameterValue._path end) end
+        return base .. " | " .. tostring(tex) end''')(body, 1)
+    check('an empty slot gets the skin material of the game\'s own mesh when the mod\'s textures fit it '
+          '(not the body\'s, which none fit)',
+          mesh().startswith('/Game/Characters/ZWGREY6/') and s1.startswith('/Game/Characters/Lune/Body/MI_Body_Other')
+          and s1.endswith('/Game/Characters/ZWGREY6/Body/body_other_D-alt.body_other_D-alt')
+          and "(the skin material of the game's own SK_Lune_Bikini_G_Skin)" in live,
+          (mesh(), s1, [x for x in live.splitlines() if 'empty' in x][:2]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
     # ---- rules chosen in the app (fixes.json): they win over the menu's own guesses
     tmp, mod, L, G, W, mesh, tex = run('')
     ids = [x.id for x in W.slots().values()]
@@ -430,6 +478,7 @@ def main():
     sel = open(os.path.join(mod, 'selection.txt'), encoding='utf-8').read()
     check('a pick saved under the old slot moves to each character\'s slot',
           'K/main@Lune\tK/a@Lune' in sel and 'K/main@Maelle\tK/a@Maelle' in sel and 'K/main\tK/a\n' not in sel, sel)
+    base.av_check(check, RUNTIMES)
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

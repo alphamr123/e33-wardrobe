@@ -38,6 +38,14 @@ from make_fake_library import tiny_utoc   # noqa: E402
 fails = 0
 
 
+
+def link_or_copy(src, dst):
+    """A hard link (no copy of a big fixture), or a copy when the fixture is on another drive."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
 def check(name, cond, extra=''):
     global fails
     print(('PASS ' if cond else 'FAIL ') + name + ('' if cond else f'   -> {extra}'))
@@ -403,7 +411,7 @@ def test_arrange():
         print('SKIP real outfit mod: set E33_SAMPLE_MOD')
         return
     real = os.path.join(TMP, 'arr', 'Lune Outfit Options')
-    shutil.copytree(sample, real, copy_function=lambda s, d: os.link(s, d))      # hard links: no copy of the mod
+    shutil.copytree(sample, real, copy_function=link_or_copy)      # hard links: no copy of the mod
     groups = library.arrange_by_outfit(real)
     check('real mod: 26 options sorted into 5 rows', library.group_tags(groups) == [
         'Expedition \u00b7 7', 'Civilian Skirt \u00b7 3', 'Bikini A \u00b7 2', 'Clea \u00b7 6', 'Sirene \u00b7 8'],
@@ -781,7 +789,7 @@ def test_e2e():
     os.environ['E33_APPDATA'] = os.path.join(e2e, 'appdata')
     game = os.path.join(e2e, 'Game')
     paks = os.path.join(game, 'Sandfall', 'Content', 'Paks')
-    shutil.copytree(paks_src, paks, copy_function=os.link)
+    shutil.copytree(paks_src, paks, copy_function=link_or_copy)
     touch(os.path.join(game, 'Sandfall', 'Binaries', 'Win64', 'ue4ss', 'UE4SS.dll'))
 
     def legacy_copy(dst, pkgs):
@@ -1318,6 +1326,9 @@ def test_bundle_job():
 
 
 def main():
+    # the real game may be open on a dev PC: the app would refuse every change ("Close the game
+    # first"). Tests of that guard switch it on themselves.
+    paths.tools()['common'].game_running = lambda fresh=False, probe=(), lp=None: False
     root, gp_root = test_game_folder()
     test_ue4ss_and_menu(root, gp_root)
     test_names()

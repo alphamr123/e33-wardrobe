@@ -50,7 +50,7 @@ Close the game first. For each drop the app:
 1. **Unpacks** it into the library. Several downloads of the same Nexus mod dropped together
    become one mod with one option per file, named after the mod on Nexus (if online).
 2. **Sorts by outfit**: when a mod's options replace different outfits (for example Clea, Sirene and
-   Bikini for Lune), each outfit gets its own row in the in-game menu.
+   Civilian Skirt for Lune), each outfit gets its own row in the in-game menu.
 3. **Prepares** every option for the in-game menu (the relocator). The progress bar counts options.
 
 Then start the game and press Delete: the mod is in the menu.

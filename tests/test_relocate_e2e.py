@@ -24,6 +24,14 @@ sys.path.insert(0, TOOLS)
 import e33legacy as L  # noqa: E402
 
 
+
+def link_or_copy(src, dst):
+    """A hard link (no copy of a big fixture), or a copy when the fixture is on another drive."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
 def run(cmd):
     p = subprocess.run(cmd, capture_output=True, text=True)
     return p.returncode, p.stdout + p.stderr
@@ -32,6 +40,10 @@ def run(cmd):
 def main():
     paks, base, retoc = sys.argv[1:4]
     tmp = tempfile.mkdtemp(prefix='e33e2e_')
+    # the relocator's work folder must be on the game's drive (it hard-links the game's paks):
+    # a copy of the fixture Paks next to the work folder, whichever drive the fixture is on
+    src_paks, paks = paks, os.path.join(tmp, 'Paks')
+    shutil.copytree(src_paks, paks, copy_function=link_or_copy)
     fails = 0
 
     def check(name, cond, extra=''):
@@ -355,7 +367,7 @@ def main():
     # ---- the Lua mod is updated without writing through a mod manager's hard link
     lua5 = os.path.join(tmp, 'lua5'); os.makedirs(os.path.join(lua5, 'Scripts'))
     staging = os.path.join(tmp, 'staging_main.lua'); open(staging, 'w').write('-- an older main.lua')
-    os.link(staging, os.path.join(lua5, 'Scripts', 'main.lua'))
+    link_or_copy(staging, os.path.join(lua5, 'Scripts', 'main.lua'))
     rc, _ = run(reloc + ['--mod', lib, '--out', os.path.join(tmp, 'out5'), '--lua-dir', lua5, '--work', tmp,
                          '--only', 'Red_P'])
     tmpl = open(os.path.join(HERE, '..', 'lua', 'E33Wardrobe', 'Scripts', 'main.lua')).read()
@@ -369,7 +381,7 @@ def main():
     # ---- --mod "<name>" finds the mod in the default library next to Paks (no saved config needed)
     game6 = os.path.join(tmp, 'game6', 'Content')
     paks6 = os.path.join(game6, 'Paks')
-    shutil.copytree(paks, paks6, copy_function=os.link)
+    shutil.copytree(paks, paks6, copy_function=link_or_copy)
     shutil.copytree(lib, os.path.join(game6, 'Paks_ModLibrary', 'TestMod'))
     rc, log11 = run([sys.executable, '-I', os.path.join(TOOLS, 'e33_relocate.py'), '--retoc', retoc, '--paks', paks6,
                      '--mod', 'TestMod', '--out', os.path.join(tmp, 'out6'), '--lua-dir', os.path.join(tmp, 'lua6'),
@@ -404,7 +416,7 @@ def main():
     for f in os.listdir(paks):
         if os.path.isfile(os.path.join(paks, f)):
             try:
-                os.link(os.path.join(paks, f), os.path.join(game, f))
+                link_or_copy(os.path.join(paks, f), os.path.join(game, f))
             except OSError:
                 shutil.copy2(os.path.join(paks, f), os.path.join(game, f))
     lib3, lua3 = os.path.join(tmp, 'Lib3'), os.path.join(tmp, 'lua3', 'E33Wardrobe')
@@ -451,6 +463,17 @@ def main():
     check('  Reinstall of a disabled mod keeps it disabled (prepared, then moved back out)',
           rc == 0 and 'is disabled' in log13 and os.path.isdir(dis) and not os.path.isdir(os.path.join(out3, 'Needy'))
           and any(f.endswith('.utoc') for f in os.listdir(dis)) and 'mod = "Needy"' not in vl(), log13[-400:])
+    if os.name == 'nt':
+        # 17 Oct audit: a file open in the parked folder (Explorer preview, antivirus) made the
+        # rename fail with a traceback that ended the whole run; now that mod is skipped with a note
+        held = open(os.path.join(dis, next(f for f in os.listdir(dis) if f.endswith('.utoc'))), 'rb')
+        try:
+            rc, log14 = run(reloc3 + ['--mod', os.path.join(lib3, 'Needy'), '--mod', os.path.join(lib3, 'Donor')])
+        finally:
+            held.close()
+        check('  a disabled mod whose parked folder can\'t be moved: skipped with a note, the other mod is prepared',
+              rc == 0 and 'Traceback' not in log14 and 'could not be moved back' in log14 and os.path.isdir(dis)
+              and '[Donor]' in log14, log14[-600:])
     r = e33fixes.set_disabled(game, lua3, 'Needy', False)
     check('enable: back in ~mods and in the menu', r['ok'] and os.path.isdir(os.path.join(out3, 'Needy'))
           and not os.path.isdir(dis) and 'mod = "Needy"' in vl(), r)
@@ -458,6 +481,66 @@ def main():
     rc, _ = run(reloc3 + ['--remove', 'Needy'])
     check('--remove of a disabled mod deletes its parked copy and forgets "disabled"', rc == 0 and not os.path.isdir(dis)
           and not e33fixes.is_disabled(e33fixes.load(lua3), 'Needy'), os.listdir(e33fixes.disabled_root(game)))
+
+    # ---- a link that differs from its package only in letter case (PC 2026-10-16: Cheekier Chic's
+    # Sciel Blueprint asks for SK_Sciel_Chic_Skin, the mod's mesh is SK_Sciel_Chic_skin). The game
+    # resolves it; retoc wrote /Engine/UnknownPackage and the relocated Blueprint had no body.
+    lib5 = os.path.join(tmp, 'Lib5')
+    lk = os.path.join(tmp, 'leg_case')
+    legacy_copy(lk, ['/Game/Materials/MI_BlueCube', '/Game/Environment/SM_BlueCube'])
+    L.relocate_tree(lk, lk + '_mi', {'/Game/Materials/MI_BlueCube': '/Game/Materials/MI_CaseCube'})
+    L.relocate_tree(lk, lk + '_sm', {'/Game/Materials/MI_BlueCube': '/Game/Materials/MI_caseCube'})
+    lk2 = lk + '_both'
+    for src_, pkg_ in ((lk + '_mi', '/Game/Materials/MI_CaseCube'), (lk + '_sm', '/Game/Environment/SM_BlueCube')):
+        f = L.package_to_rel(pkg_)
+        for ext in ('.uasset', '.uexp'):
+            d = os.path.join(lk2, *f.split('/')) + ext
+            os.makedirs(os.path.dirname(d), exist_ok=True)
+            shutil.copy(os.path.join(src_, *f.split('/')) + ext, d)
+    pack(lk2, os.path.join(lib5, 'Cased', 'Opt', 'Case_P'), 'Case_P')
+    rc, log15 = run(reloc3 + ['--mod', os.path.join(lib5, 'Cased')])
+    r5 = json.load(open(os.path.join(out3, 'relocate_report.json'))).get('Cased/Opt/Case_P', {})
+    check('case: a link spelled MI_caseCube to the mod\'s MI_CaseCube resolves (no unresolved imports)',
+          rc == 0 and r5.get('output') and not r5.get('unresolved'), (r5.get('unresolved'), r5.get('error'), log15[-400:]))
+    check('  and the run says it fixed the letter case of that link',
+          'fixed the letter case of 1 link(s)' in log15
+          and '/Game/Materials/MI_caseCube -> /Game/Materials/MI_CaseCube' in log15, log15[-400:])
+    sm_new, mi_new = r5.get('map', {}).get('/Game/Environment/SM_BlueCube'), r5.get('map', {}).get('/Game/Materials/MI_CaseCube')
+    comp5, leg5 = os.path.join(tmp, 'comp_case'), os.path.join(tmp, 'leg_case_out')
+    os.makedirs(comp5)
+    for f in os.listdir(game):
+        if os.path.isfile(os.path.join(game, f)) and f.lower().endswith(('.utoc', '.ucas')):
+            link_or_copy(os.path.join(game, f), os.path.join(comp5, f))
+    for ext in ('.utoc', '.ucas'):
+        link_or_copy(r5['output'][:-5] + ext, os.path.join(comp5, 'zz_case_out_P' + ext))
+    imported = []
+    if sm_new and mi_new:
+        run([retoc, 'to-legacy', comp5, leg5, '--no-shaders', '--no-script-objects', '--filter', L.package_to_rel(sm_new) + '.'])
+        ua = os.path.join(leg5, *L.package_to_rel(sm_new).split('/')) + '.uasset'
+        imported = L.read_package_info(ua)['imported_packages'] if os.path.isfile(ua) else []
+    check('  the relocated mesh links to the relocated material, as the game would load it',
+          bool(mi_new) and mi_new in imported and '/Engine/UnknownPackage' not in imported, (sm_new, mi_new, imported))
+    # ... but a link to a GAME package is never respelled (PC 17 Oct audit): the game's file index can
+    # spell a folder differently from the package's own name (index Civil/Textures, package
+    # Civil/textures), and mods link by the package's own name. A game container like that:
+    lg = os.path.join(tmp, 'leg_gamecase')
+    legacy_copy(lg, ['/Game/Materials/MI_BlueCube'])
+    L.relocate_tree(lg, lg + '_r', {'/Game/Materials/MI_BlueCube': '/Game/Mtl/textures/MI_TCube'})
+    low_dir = os.path.join(lg + '_r', 'Sandfall', 'Content', 'Mtl', 'textures')
+    os.rename(low_dir, low_dir + '_x')
+    os.rename(low_dir + '_x', os.path.join(lg + '_r', 'Sandfall', 'Content', 'Mtl', 'Textures'))  # index: Textures
+    rc_, o_ = run([retoc, 'to-zen', '--version', 'UE5_4', lg + '_r', os.path.join(game, 'pakchunk77-Windows.utoc')])
+    lm6 = os.path.join(tmp, 'leg_gamecase_mod')
+    legacy_copy(lm6, ['/Game/Environment/SM_BlueCube'])
+    L.relocate_tree(lm6, lm6 + '_r', {'/Game/Materials/MI_BlueCube': '/Game/Mtl/textures/MI_TCube'})
+    pack(lm6 + '_r', os.path.join(lib5, 'GameCase', 'Opt', 'Mesh_P'), 'Mesh_P')
+    rc, log16 = run(reloc3 + ['--mod', os.path.join(lib5, 'GameCase')])
+    r6 = json.load(open(os.path.join(out3, 'relocate_report.json'))).get('GameCase/Opt/Mesh_P', {})
+    check('case: a link spelled like the game package\'s own name (not its file index) is left as it is and resolves',
+          rc_ == 0 and rc == 0 and r6.get('output') and not r6.get('unresolved') and 'letter case' not in log16,
+          (o_[-200:], r6.get('unresolved'), [x for x in log16.splitlines() if 'letter case' in x]))
+    os.remove(os.path.join(game, 'pakchunk77-Windows.utoc'))
+    os.remove(os.path.join(game, 'pakchunk77-Windows.ucas'))
 
     # ---- names that clean to the same folder or pak (audit 1.3.0): nothing overwrites another's files
     lib4 = os.path.join(tmp, 'Lib4')

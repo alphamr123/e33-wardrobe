@@ -25,6 +25,8 @@ SCEN = r'''
 local function mi(pkg, obj) asset("MaterialInstanceConstant", pkg, obj, { TextureParameterValues = TArray({}) }) end
 mi("/Game/Characters/Heros/Lune/MI_Body", "MI_Body")
 mi("/Game/Materials/Hide_Material", "Hide_Material")
+mi("/Game/Characters/Heros/Lune/MI_Pot", "MI_Pot")
+mi("/Game/ZWPOTA0001/Heros/Lune/MI_Pot", "MI_Pot")
 local function skel(pkg, obj)
   asset("SkeletalMesh", pkg, obj, { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Heros/Lune/MI_Body.MI_Body") } }) })
 end
@@ -36,6 +38,10 @@ skel("/Game/ZWOUTA0001/Heros/Lune/Customization/Skin/SK_Lune_Chic_Skin", "SK_Lun
 skel("/Game/ZWOUTB0001/Heros/Lune/Customization/Skin/SK_Lune_Chic_Skin", "SK_Lune_Chic_Skin")
 skel("/Game/Characters/Heros/Lune/Customization/Skin/SK_Lune_Potato_Skin", "SK_Lune_Potato_Skin")
 skel("/Game/ZWPOTA0001/Heros/Lune/Customization/Skin/SK_Lune_Potato_Skin", "SK_Lune_Potato_Skin")
+skel("/Game/Characters/Heros/Maelle/SK_Maelle_Placeholder", "SK_Maelle_Placeholder")
+SFOS = {}
+local baseSFO = StaticFindObject
+function StaticFindObject(p) SFOS[p] = (SFOS[p] or 0) + 1; return baseSFO(p) end
 GTDEPTH, NESTED, EIGT_CALLS = 0, 0, 0
 function ExecuteInGameThread(f)
   EIGT_CALLS = EIGT_CALLS + 1
@@ -73,8 +79,9 @@ SKINBODY._f.GetOwner = function() return SHARED end   -- the component belongs t
 NMAT = 0
 local gnm = SKINBODY._f.GetNumMaterials
 SKINBODY._f.GetNumMaterials = function(self) NMAT = NMAT + 1; return gnm(self) end
-REGSET("/Game/Characters/Heros/Lune/Customization/Skin/BP_CharacterSkin_LuneOutfit_Chic.BP_CharacterSkin_LuneOutfit_Chic_C:Body_GEN_VARIABLE",
-       meshComp("Body_GEN_VARIABLE", get("/Game/Characters/Heros/Lune/Customization/Skin/SK_Lune_Chic_Skin.SK_Lune_Chic_Skin")))
+TMPL = meshComp("Body_GEN_VARIABLE", get("/Game/Characters/Heros/Lune/Customization/Skin/SK_Lune_Chic_Skin.SK_Lune_Chic_Skin"))
+TMPL._path = "/Game/Characters/Heros/Lune/Customization/Skin/BP_CharacterSkin_LuneOutfit_Chic.BP_CharacterSkin_LuneOutfit_Chic_C:Body_GEN_VARIABLE"
+REGSET("/Game/Characters/Heros/Lune/Customization/Skin/BP_CharacterSkin_LuneOutfit_Chic.BP_CharacterSkin_LuneOutfit_Chic_C:Body_GEN_VARIABLE", TMPL)
 REDRESSED = 0
 SKINCOMP = new("BP_CharacterSkinComponent_C", "/Game/Map.PersistentLevel.BP_jRPG_Character_World_C_9.BP_CharacterSkinComponent", {},
   { ApplyCurrentCharacterSkin = function() REDRESSED = REDRESSED + 1 end })
@@ -83,6 +90,24 @@ function FindAllOf(n)
   if n == "SkeletalMeshComponent" then return COMPS end
   if n == "BP_CharacterSkinComponent_C" then return { SKINCOMP } end
   return baseFAO(n)
+end
+-- PC: the walking character (BP_jRPG_Character_World_C) has only run-time named mesh components, and
+-- they show meshes of more than one character, so its character can't be told
+function mixedActor()
+  local cls = new("BlueprintGeneratedClass", "/Game/jRPG/BP_jRPG_Character_World2.BP_jRPG_Character_World2_C")
+  cls._super = { GetFName = function() return { ToString = function() return "Character" end } end,
+                 IsValid = function() return true end, GetSuperStruct = function() return nil end }
+  local c1 = meshComp("SkeletalMeshComponent_2147406712", get("/Game/ZWPOTA0001/Heros/Lune/Customization/Skin/SK_Lune_Potato_Skin.SK_Lune_Potato_Skin"))
+  local c2 = meshComp("SkeletalMeshComponent_2147406713", get("/Game/Characters/Heros/Maelle/SK_Maelle_Placeholder.SK_Maelle_Placeholder"))
+  c1._path = "/Game/Map.PersistentLevel.BP_jRPG_Character_World2_C_5.SkeletalMeshComponent_2147406712"
+  c2._path = "/Game/Map.PersistentLevel.BP_jRPG_Character_World2_C_5.SkeletalMeshComponent_2147406713"
+  local a = new("BP_jRPG_Character_World2_C", "/Game/Map.PersistentLevel.BP_jRPG_Character_World2_C_5", {},
+                { K2_GetComponentsByClass = function() return TArray({ c1, c2 }) end })
+  a._class = cls
+  c1._f.GetOwner = function() return a end
+  c2._f.GetOwner = function() return a end
+  table.insert(COMPS, c1); table.insert(COMPS, c2)
+  return a, c1
 end
 function newPawn()   -- a second pawn of the learned class, spawned later
   local body = meshComp("Body", get("/Game/Characters/Heros/Lune/SK_Lune_Placeholder.SK_Lune_Placeholder"))
@@ -114,7 +139,8 @@ VARIANTS = f'''return {{
       {{ id = "S/", label = "", map = {{ ["{PH}"] = {E(PH, "/Game/ZWBODY0001/Heros/Lune/SK_Lune_Placeholder")} }} }} }} }} }} }},
   {{ mod = "Infernal", slots = {{
     {{ id = "I/Main", label = "Infernal: Main", character = "Lune", variants = {{
-      {{ id = "I/", label = "on", map = {{ ["/Game/Characters/Heros/Lune/Customization/Skin/SK_Lune_Potato_Skin"] = {{ "/Game/ZWPOTA0001/Heros/Lune/Customization/Skin/SK_Lune_Potato_Skin", "SK_Lune_Potato_Skin", "SkeletalMesh", true }} }} }} }} }} }} }},
+      {{ id = "I/", label = "on", map = {{ ["/Game/Characters/Heros/Lune/Customization/Skin/SK_Lune_Potato_Skin"] = {{ "/Game/ZWPOTA0001/Heros/Lune/Customization/Skin/SK_Lune_Potato_Skin", "SK_Lune_Potato_Skin", "SkeletalMesh", true }},
+        ["/Game/Characters/Heros/Lune/MI_Pot"] = {{ "/Game/ZWPOTA0001/Heros/Lune/MI_Pot", "MI_Pot", "MaterialInstanceConstant", true }} }} }} }} }} }} }},
   {{ mod = "Grp", slots = {{
     {{ id = "G/outfit", label = "Grp: Lune outfit", character = "Lune", variants = {{
       {{ id = "G/o/lace", label = "Lace dress: Lace lune-sleeves-boots", map = {{ ["/Game/Grp/T_o1"] = {{ "/Game/ZWGRP00001/T_o1", "T_o1", "Texture2D", true }} }} }},
@@ -181,8 +207,34 @@ def main():
     check('  slot state "on"', W.slotState(idx['LLT/Body']) == 'on', W.slotState(idx['LLT/Body']))
     a2, b2 = L.eval('newPawn')()
     G.BEGINPLAY(L.eval('function(a) return { get = function() return a end } end')(a2))
-    G.runDelayed()
+    G.runDelayed(); G.tickGT(20)                               # new skins are looked at ~1 s after they appear
     check('a new pawn of that learned class is swapped on BeginPlay', mesh(b2).startswith('/Game/ZWBODY0001/'), mesh(b2))
+    # PC: the party members walking behind the leader are re-created after battles, mostly without a
+    # BeginPlay the mod sees; they kept the game's outfit until Fix look. The learned classes are
+    # looked up every 2 s.
+    b3 = L.execute('''
+      local body = meshComp("Body", get("/Game/Characters/Heros/Lune/SK_Lune_Placeholder.SK_Lune_Placeholder"))
+      local a = new("BP_jRPG_Character_World_C", "/Game/Map.PersistentLevel.BP_jRPG_Character_World_C_3", { Body = body },
+                    { K2_GetComponentsByClass = function() return TArray({ body }) end })
+      a._class = PAWNCLS; a._skin = "BP_jRPG_Character_World_C"   -- FindAllOf(class name) finds it
+      body._f.GetOwner = function() return a end
+      table.insert(COMPS, body); table.insert(ACTORS, a)
+      return body
+    ''')
+    G.tickGT(10)
+    early = mesh(b3)
+    G.tickGT(50)
+    check('a pawn of a learned class re-created without BeginPlay (companion after a battle) is dressed within ~3 s',
+          early.startswith(PH) and mesh(b3).startswith('/Game/ZWBODY0001/'), (early, mesh(b3)))
+    # and the 2 s look-up costs nothing while nothing changes: in a later, quiet minute no pawn is
+    # looked at again (the 'stats' line counts every look)
+    G.tickGT(2500)                                              # two stats lines: the last minute is quiet
+    lv = open(os.path.join(tmp, 'E33Wardrobe', 'live_log.txt'), encoding='utf-8').read()
+    st = [x for x in lv.splitlines() if ' stats (' in x]
+    import re as _re
+    looks = int(_re.search(r'(\d+) actor look', st[-1]).group(1)) if st else -1
+    check('  the 2 s look-up re-dresses nothing that is already dressed (stats: actor looks in the last minute)',
+          len(st) >= 2 and looks == 0, st[-2:] if st else 'no stats line')
     cmd(None, t([str(idx['LLT/Body']), 'off']))
     check('switching it off restores the game body', mesh(G.PAWNBODY) == PH + '.SK_Lune_Placeholder', mesh(G.PAWNBODY))
 
@@ -346,6 +398,72 @@ def main():
     cmd(None, t([str(idx['I/Main']), 'off']))
     cmd(None, t([str(idx['A/Main']), '1']))                          # state the dump checks below expect
 
+    # fix14 rule: an actor whose character can't be told (PC: "[no character]" on the walking character):
+    # the character its mesh is made for decides, so a Lune-only pick isn't undone there (PC: undone,
+    # then put back by Lune's skin 2 s later, every pass)
+    cmd(None, t([str(idx['I/Main']), '1']))                         # Lune-only Potato replacer
+    G.settle()
+    ma, mc = L.eval('mixedActor')()
+    L.eval('function(c) c:SetMaterial(0, get("/Game/ZWPOTA0001/Heros/Lune/MI_Pot.MI_Pot")) end')(mc)
+    W.applyAll()
+    G.settle()
+    check('an actor of no known character keeps a Lune-only variant on a Lune mesh (not undone)',
+          mesh(mc).startswith('/Game/ZWPOTA0001/'), mesh(mc))
+    lv = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    mat0 = L.eval('function(c) return c:GetMaterial(0)._path end')
+    check('  and its material from the same pick stays too (the whole component counts as Lune\'s)',
+          mat0(mc) == '/Game/ZWPOTA0001/Heros/Lune/MI_Pot.MI_Pot', mat0(mc))
+    check('  and the pass says nothing about it ("variant off" for that component)',
+          'SkeletalMeshComponent_2147406712: mesh /Game/ZWPOTA0001' not in lv, [x for x in lv.splitlines() if '2147406712' in x][:3])
+    cmd(None, t([str(idx['I/Main']), 'off']))
+    G.settle()
+    check('  with the pick off it goes back to the game\'s own mesh',
+          mesh(mc) == '/Game/Characters/Heros/Lune/Customization/Skin/SK_Lune_Potato_Skin.SK_Lune_Potato_Skin', mesh(mc))
+    # a skin actor with a run-time named component and a worn mesh left on its body: its own templates
+    # are looked up (self-heal), but never for the run-time name
+    L.execute('''
+      local cls = SKIN._class
+      local body = meshComp("Body", get("/Game/ZWBODY0002/Heros/Lune/SK_Lune_Placeholder.SK_Lune_Placeholder"))
+      local extra = meshComp("GroomComponent_2147317866", get("/Game/Characters/Heros/Lune/SK_Lune_Placeholder.SK_Lune_Placeholder"))
+      local a = new("BP_CharacterSkin_LuneOutfit_Chic_C", "/Game/Map.PersistentLevel.BP_CharacterSkin_LuneOutfit_Chic_C_7",
+                    { Body = body }, { K2_GetComponentsByClass = function() return TArray({ body, extra }) end })
+      a._class = cls; a._skin = "BP_CharacterSkinBase_C"
+      body._f.GetOwner = function() return a end; extra._f.GetOwner = function() return a end
+      table.insert(COMPS, body); table.insert(ACTORS, a); RTBODY = body
+    ''')
+    W.applyAll()
+    G.settle()
+    check('  (the run-time named actor was looked at: its leftover worn mesh went back to Chic, as Outfits A)',
+          mesh(G.RTBODY).startswith('/Game/ZWOUTA0001/'), mesh(G.RTBODY))
+    L.execute('table.remove(COMPS); table.remove(ACTORS)')
+    sf = dict(L.eval('SFOS').items())
+    check('fix14: components named at run time are never looked up as templates (each miss cost 13-27 ms on PC)',
+          not any('_2147406712_GEN_VARIABLE' in k or '_2147406713_GEN_VARIABLE' in k or 'GroomComponent_2147317866' in k
+                  for k in sf),
+          [k for k in sf if '_GEN_VARIABLE' in k][:4])
+    tk = '/Game/Characters/Heros/Lune/Customization/Skin/BP_CharacterSkin_LuneOutfit_Chic.BP_CharacterSkin_LuneOutfit_Chic_C:Body_GEN_VARIABLE'
+    check('  and a class\'s template is looked up once, not on every look', sf.get(tk, 0) == 1, sf.get(tk))
+    # a kept template whose address now holds another object (the class was unloaded): looked up again
+    L.execute('TMPL._path = "/Game/Other/Thing.Thing"')
+    L.eval('function(b) b._mesh = get("/Game/ZWBODY0002/Heros/Lune/SK_Lune_Placeholder.SK_Lune_Placeholder") end')(G.SKINBODY)
+    W.applyAll()
+    G.settle()
+    sf = dict(L.eval('SFOS').items())
+    check('  a kept template that is now another object (same address, other name) is looked up again',
+          sf.get(tk, 0) == 2, sf.get(tk))
+    L.execute('TMPL._path = "/Game/Characters/Heros/Lune/Customization/Skin/BP_CharacterSkin_LuneOutfit_Chic.BP_CharacterSkin_LuneOutfit_Chic_C:Body_GEN_VARIABLE"')
+    L.execute('table.remove(COMPS); table.remove(COMPS)')        # the dump checks below expect no Maelle loaded
+    # ... but only for the mod's relocated meshes: the game's own can be shared (Lune's Chic is Sciel's too)
+    cmd(None, t([str(idx['A/Main']), '1']))                         # a Lune pick for Chic
+    G.settle()
+    ma2, mc2 = L.eval('mixedActor')()
+    L.eval('function(c) c._mesh = get("/Game/Characters/Heros/Lune/Customization/Skin/SK_Lune_Chic_Skin.SK_Lune_Chic_Skin") end')(mc2)
+    W.applyAll()
+    G.settle()
+    check('an actor of no known character showing the game\'s own (shared) Chic mesh is left alone',
+          mesh(mc2) == CHIC + '.SK_Lune_Chic_Skin', mesh(mc2))
+    L.execute('table.remove(COMPS); table.remove(COMPS)')
+
     G.KEYS['C+F9']()
     dump = open(os.path.join(mod, 'dump.txt'), encoding='utf-8').read()
     check('dump visits the non-skin pawn and says why', 'BP_jRPG_Character_World_C_1' in dump
@@ -417,6 +535,7 @@ def main():
 
     errors = [l for l in G.getlog().split('\n') if 'failed' in l or 'error' in l]
     check('no apply errors', not errors, errors)
+    base.av_check(check, [L])
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

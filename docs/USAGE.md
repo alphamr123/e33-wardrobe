@@ -45,7 +45,7 @@ The first menu key you press only shows the yellow focus ring; the next ones mov
 ## The menu at a glance
 
 - **Top row**: **Outfits**, **Presets**, **Settings**, **Peek**, **Close**.
-- **Status line** under the title: what the last action did, in words. For example
+- **Status bar** at the bottom: what the last action did, in words. For example
   `Lune · Outfit · Some Mod: sleeves · boots - 2/2 pieces on screen`, or
   `nothing on screen changed: made for Potato bag; Lune wears Chic`.
 - **Help line** at the bottom: what the row you last clicked or highlighted does. The key help
@@ -72,7 +72,7 @@ The first menu key you press only shows the yellow focus ring; the next ones mov
   - `… · hidden`: another pick changes the same pieces and was picked later. **Bring to front** on
     the line below fixes that.
   - `… · not visible`: what the pick changes isn't used by anything on screen right now.
-- **After a pick**, the status line says what happened, and a line under the row repeats the
+- **After a pick**, the status bar says what happened, and a line under the row repeats the
   reason and offers the fix (**Wear**, **Bring to front**, or **OK** to dismiss it). Rows that were
   switched to match (see below) are named too.
 - **Bottom row**: **Undo** (says what it undid; up to 30 steps), **All off** and **Randomize**
@@ -85,7 +85,7 @@ while the character wears the Potato bag. E33 Wardrobe treats such a mod as one 
 character wears another outfit, none of the mod's parts touch it, so the two looks never mix.
 
 **Auto Wear** (on by default): when you pick a mod made for an outfit the character isn't wearing,
-it is put on **in place of** the current outfit by itself, and the status line says so. The body
+it is put on **in place of** the current outfit by itself, and the status bar says so. The body
 is one mesh, so the two don't layer; the original outfit is remembered and comes back with
 **Unwear**. After Unwear, Auto Wear leaves that slot alone until you pick it again. With Auto Wear
 off (Settings), use the **Wear** button instead.
@@ -175,6 +175,7 @@ Kept in `settings.txt` next to the mod.
 | Slideshow / Peek seconds | 4 s / 3 s | Seconds per slideshow step (1-60); how long Peek hides the menu (1-15). |
 | Menu side / scale | right / 100 % | Left or right edge; 50-200 % in steps of 10. The menu also shrinks to fit small screens. |
 | Mouse cursor / freeze camera | on / on | While the menu is open: show the cursor; stop the mouse from turning the camera. |
+| Test: game dresses (B) | off | Experimental test of a new way of switching. **param**: the game's own dressing call is given the picked outfit's own skin Blueprint (with Wear on for that row: whatever the character wears). Press Fix look after switching. Needs UE4SS 3.0.1-1176 or newer. |
 | UI input mode (try if clicks fail) | off | Switch the game to game-and-UI input while the menu is open. Try it only if clicks don't reach the menu; other mods saw trouble with input modes during cutscenes. |
 | Record session / auto report | on / off | Record: write `live_log.txt` ([TROUBLESHOOTING.md](TROUBLESHOOTING.md#session-recording)). Auto report: rewrite `dump.txt` and `report.txt` 4 s after each change (only while recording). |
 
@@ -185,7 +186,11 @@ stay).
 
 Only in `settings.txt`: `recheck_ms` (how long after a character spawns to look again for
 materials the game sets late; default 700) and `legacy_keys` (`true` switches on slot cycling with
-Ctrl+F5 / Ctrl+F6, plus Shift for backwards).
+Ctrl+F5 / Ctrl+F6, plus Shift for backwards), `b_soft` (`auto`: read the game's soft
+references only on a UE4SS build where bug #1433 is fixed, 1176; `on` / `off` force it), `trace`
+(default `true`: the steps before a freeze in live_log.txt; `false` turns them off, read at game
+start) and `scene_copies` (default `true`; `false` leaves alone the copies the game dresses for
+dialogue and battle).
 
 ## Console commands
 
@@ -202,6 +207,11 @@ In the UE4SS console or the game console:
 | `wardrobe report` | Write `dump.txt` and `report.txt` |
 | `wardrobe fix` | Fix look |
 | `wardrobe clean` / `wardrobe clean off` | Switch Clean on / off |
+
+The same commands can come from a file: lines written into `commands.txt` next to the mod are run
+about once a second (without the word `wardrobe`), logged and the file is deleted. The file also
+takes `pick <slot id> | <variant id or off>`, `wear <slot id> | on|off` and `set <setting> <value>`
+(for scripts and testing).
 
 ## Changing keys and outfit names
 

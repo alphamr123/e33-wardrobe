@@ -28,13 +28,18 @@ TOOL_FILES = ['E33 Relocate.bat', 'e33_relocate.py', 'e33common.py', 'e33fixes.p
 # (e33_mixer*, e33previews, its .bat) stays in the repository only: optional, not part of the release.
 LUA_SCRIPTS = ['main.lua', 'menu.lua', 'config.example.lua']   # never config.lua: an update must not replace the user's
 TOP_FILES = ['README.md', 'LICENSE', 'CHANGELOG.md', 'CONTRIBUTING.md', 'research/usmap.py']
+# docs for players and contributors; docs/README.md (task router), index.md and runbook.md are the
+# maintainer's notes and stay out of the zip
+DOC_FILES = ['APP.md', 'DEVELOPMENT.md', 'HOW_IT_WORKS.md', 'INSTALL.md', 'MIXER.md', 'RELOCATOR.md', 'RESEARCH.md',
+             'TROUBLESHOOTING.md', 'USAGE.md', 'glossary.md']
 # the notice for a rules file is only packed together with that file
 RULES_NOTICE = re.compile(r'^- \*\*Cheekier Chic\*\*[^\n]*\n(?:  [^\n]*\n)*', re.M)
 
 LUA_README = """E33 Wardrobe {version} - UE4SS mod for Clair Obscur: Expedition 33
 
 Needs UE4SS, experimental build from December 2025 or later (Nexus Mods: E33 UE4SS page, mod 630,
-file "UE4SS - Experimental (Newer)"; tested: 3.0.1-1125-g527a483b).
+file "UE4SS - Experimental (Newer)"; tested: 3.0.1-1125-g527a483b and 3.0.1-1176-g1ba38db4).
+The optional "Test: game dresses (B)" setting needs 1176 or newer.
 
 Install: with Vortex, or extract into ...\\Sandfall\\Binaries\\Win64\\ue4ss\\Mods\\
 (Game Pass: ...\\Binaries\\WinGDK\\ue4ss\\Mods\\), so that
@@ -118,7 +123,8 @@ def main():
         info.compress_type = zipfile.ZIP_DEFLATED
         z.writestr(info, notices)
         add_tree(z, os.path.join(ROOT, 'LICENSES'), f'{base}/LICENSES')
-        add_tree(z, os.path.join(ROOT, 'docs'), f'{base}/docs')
+        for f in DOC_FILES:                 # a list, not the folder: the maintainer's notes stay out
+            add(z, os.path.join(ROOT, 'docs', f), f'{base}/docs/{f}')
         for f in TOOL_FILES:
             add(z, os.path.join(ROOT, 'tools', f), f'{base}/tools/{f}')
         if a.with_rules:

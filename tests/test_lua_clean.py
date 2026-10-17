@@ -90,7 +90,7 @@ function cine(k) return CINE[k] end         -- written values live on the object
 function RegisterLoadMapPreHook(fn) MAP_PRE = fn end
 -- the render target library and the game instance
 GI = new("GameInstance", "/Engine/Transient.BP_GameInstance_C_0")
-function FindFirstOf(n) if n == "GameInstance" then return GI end end
+function FindFirstOf(n) if n == "GameInstance" then return GI end; return NULLOBJ() end
 RT_MADE, RT_ARGS, RT_CLEARED = 0, nil, 0
 local baseSFO = StaticFindObject
 function StaticFindObject(p)
@@ -205,6 +205,7 @@ def main():
         if m:
             n += 1 if m.group(1) else len([x for x in m.group(2).split('=')[0].split(',') if x.strip()])
     check(f'main.lua: {n} top-level locals, under 197 (Lua\'s limit is 200 per function)', n < 197, n)
+    base.av_check(check, [L])
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

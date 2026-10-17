@@ -94,7 +94,7 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
   "name": "Lune Outfit Options",
   "state": "ready" | "not_installed" | "working" | "failed" | "disabled",
   "characters": ["Lune"],
-  "replaces": ["Expedition", "Civilian Skirt", "Bikini A", "Clea", "Sirene"],   // outfit names
+  "replaces": ["Expedition", "Civilian Skirt", "Swim A", "Clea", "Sirene"],   // outfit names
   "options": 26, "rows": 5,
   "size": 64802523,
   "swatches": ["data:image/png;base64,..."],   // up to 4

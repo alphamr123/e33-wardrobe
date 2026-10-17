@@ -119,7 +119,7 @@
         opt('Short Skirt', 'slate', 'Outfit mesh, 1 material', 'Outfit 2K'),
         opt('Navy', 'navy', '1 material', 'Outfit 1K'),
       ] },
-      { label: 'Bikini A', options: [
+      { label: 'Swim A', options: [
         opt('Black', 'black', '2 materials', 'Outfit 1K'),
         opt('White', 'white', '2 materials', 'Outfit 1K'),
         opt('Red', 'red', '2 materials', 'Outfit 1K'),
@@ -529,8 +529,8 @@
     material_choices: (id, vid, mesh, slot) => ({ ok: true, variant: vid, mesh, slot, current: null, choices: [
       { value: 'body', label: "The body's own material", sub: 'What the character wore before' },
       { value: 'hide', label: 'Hidden', sub: 'The slot shows nothing' },
-      { value: '/Game/Mods/Bikini_Set/Materials/MI_Sciel_Bikini-alt', label: 'MI_Sciel_Bikini-alt', sub: 'A material of this option' },
-      { value: '/Game/Mods/Bikini_Set/Materials/MI_Sciel_Bikini_Trim-alt', label: 'MI_Sciel_Bikini_Trim-alt', sub: 'A material of this option' }] }),
+      { value: '/Game/Mods/Summer_Set/Materials/MI_Sciel_Summer-alt', label: 'MI_Sciel_Summer-alt', sub: 'A material of this option' },
+      { value: '/Game/Mods/Summer_Set/Materials/MI_Sciel_Summer_Trim-alt', label: 'MI_Sciel_Summer_Trim-alt', sub: 'A material of this option' }] }),
     set_material_rule: () => ({ ok: true }),
     bundle_plan: (id, vid) => ({ ok: true, variant: vid, sources: [{ mod: 'Chic Variants Old', option: 'Chic Variants Old/Lace dress/Trim', label: 'Lace dress · Trim',
       package: '/Game/Characters/Sciel/Chic/MI_Chic_Trim_Old',
@@ -606,7 +606,7 @@
     staticJob({ name: "Lune's Outfit Options-337-2-1-1750919736.7z", size: 64802523, kind: 'add', status: 'working', steps: [
       { key: 'unpack', label: 'Unpacked', state: 'done', detail: '26 options found' },
       { key: 'sort', label: 'Sorted by outfit', state: 'done', detail: '5 rows in the menu',
-        tags: ['Expedition · 7', 'Civilian Skirt · 4', 'Bikini A · 4', 'Clea · 6', 'Sirene · 5'] },
+        tags: ['Expedition · 7', 'Civilian Skirt · 4', 'Swim A · 4', 'Clea · 6', 'Sirene · 5'] },
       { key: 'install', label: 'Preparing for the in-game menu', state: 'run', detail: 'Option 17 of 26: Clea · Shorter Skirt', progress: 0.64 },
     ] });
     staticJob({ name: 'Hair Pack-702-1-0-1751300000.zip', size: 8650752, kind: 'add', status: 'failed',

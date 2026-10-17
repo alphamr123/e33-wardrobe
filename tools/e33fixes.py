@@ -278,7 +278,7 @@ def move_dir(src, dst, aside=None):
 
 
 def out_root_of(registry, mod, paks=None):
-    """The folder that holds the mod's prepared folder (~mods\_E33Wardrobe, or the relocator's
+    """The folder that holds the mod's prepared folder (~mods\\_E33Wardrobe, or the relocator's
     --out), from its prepared files; else the default."""
     for m in registry:
         if isinstance(m, dict) and str(m.get('name', '')).lower() == mod.lower():

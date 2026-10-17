@@ -19,6 +19,14 @@ ROOT = os.path.dirname(HERE)
 sys.path[:0] = [ROOT, os.path.join(ROOT, 'tools')]
 
 
+
+def link_or_copy(src, dst):
+    """A hard link (no copy of a big fixture), or a copy when the fixture is on another drive."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
 def main():
     need = [os.environ.get(k) for k in ('E33_E2E_PAKS', 'E33_RETOC', 'E33_SAMPLE_ARCHIVES', 'E33_E2E_BASE')]
     try:
@@ -43,7 +51,7 @@ def main():
     # a fake game: Paks from the fixture (hard links), UE4SS present, no menu yet
     game = os.path.join(tmp, 'Expedition 33')
     paks = os.path.join(game, 'Sandfall', 'Content', 'Paks')
-    shutil.copytree(paks_src, paks, copy_function=os.link)
+    shutil.copytree(paks_src, paks, copy_function=link_or_copy)
     ue4ss = os.path.join(game, 'Sandfall', 'Binaries', 'Win64', 'ue4ss')
     os.makedirs(os.path.join(ue4ss, 'Mods'))
     open(os.path.join(ue4ss, 'UE4SS.dll'), 'wb').close()

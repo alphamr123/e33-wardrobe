@@ -35,6 +35,10 @@ itself is in [HOW_IT_WORKS.md](HOW_IT_WORKS.md); the research behind it in
 | `app/API.md` | The contract between the page and the backend |
 | `app/e33wardrobe.spec`, `.github/workflows/build-app.yml` | The Windows build (PyInstaller, on GitHub Actions) |
 | `scripts/render_app.py` | Screenshots of the app's screens from `mock.js` |
+| `tools/e33fixes.py`; `app/backend/fixes.py`, `culprit.py`, `repair.py` | The fix tools: `fixes.json` (row edits, hidden options, disabled mods, rules, bundles), Find the problem mod, Check & repair |
+| `scripts/collect_crash.py`, `analyze_dump.py`, `dump_threads.py` | Crash and freeze dumps: collect one with the logs, read the exception and stacks, list every thread |
+| `scripts/gen_index.py` | Writes `docs/index.md` in the repository (every file, API method, hook, setting and log line) |
+| `tests/sabotage.py`, `tests/perf/count_crossings.py` | Break one line and run a suite (does a test catch it?); count the mod's calls into UE4SS per scenario |
 
 ## The app
 

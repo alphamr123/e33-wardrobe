@@ -141,6 +141,83 @@ def main():
         check('lua_quote: control characters can\'t end the string', lua54.LuaRuntime().execute('return ' + q) == 'a\rb\x01c"\\\n', q)
     except ImportError:
         pass
+    # zen headers: imported package names whose letter case differs from the real package (PC
+    # 2026-10-16, Cheekier Chic: SK_Sciel_Chic_Skin vs the mod's SK_Sciel_Chic_skin)
+    import e33utoc
+
+    def batch(names, wide=()):
+        strs = [n.encode('utf-16-le') if n in wide else n.encode('latin-1') for n in names]
+        heads = b''.join(struct.pack('>H', (0x8000 if n in wide else 0) | len(n)) for n in names)
+        return (struct.pack('<II', len(names), sum(map(len, strs))) + b'\0' * 8 + b'\x11' * 8 * len(names)
+                + heads + b''.join(strs))
+
+    def zen_header(own, imports, wide=(), ipn=None):
+        """A UE5.4 zen package header: summary (own name = name map entry 0), name map, imported
+        package names (a name batch, then an int32 FName number per name), 16 bytes of export map."""
+        names = batch([own[0]])
+        imp = batch([b for b, _n in imports], wide) + b''.join(struct.pack('<i', n) for _b, n in imports)
+        ipn_off = 52 + len(names)
+        size = ipn_off + len(imp) + 16
+        summary = struct.pack('<IIII', 0, size, 0, own[1]) + b'\0' * 32 + struct.pack('<i', ipn if ipn is not None else ipn_off)
+        return summary + names + imp + b'\xee' * 16
+
+    imports = [('/Game/Sciel/SK_Sciel_Chic_Skin', 0), ('/Game/Bikini/MI_Body', 0), ('/Game/W/MI_Wide', 0),
+               ('/Game/Mod/T_Skin', 3), ('/Game/Mod/SK_Foo', 3)]
+    hdr = zen_header(('/Game/Mod/BP_Skin', 0), imports, wide={'/Game/W/MI_Wide'})
+    real = {'/game/sciel/sk_sciel_chic_skin': '/Game/Sciel/SK_Sciel_Chic_skin', '/game/bikini/mi_body': '/Game/Bikini/MI_Body',
+            '/game/w/mi_wide': '/Game/W/MI_wide',
+            '/game/mod/t_skin': '/Game/Mod/T_skin', '/game/mod/t_skin_2': '/Game/Mod/T_Skin_2',   # T_Skin_2 is right as it is
+            '/game/mod/sk_foo_2': '/Game/Mod/SK_foo_2'}
+    new, ch = e33utoc.fix_import_case(hdr, real)
+    got = [e33utoc.with_number(b, n) for _o, _s, _w, b, n in e33utoc.zen_imported_packages(new)]
+    check('fix_import_case: the names that differ in case get the real spelling, numbers included',
+          ch == [('/Game/Sciel/SK_Sciel_Chic_Skin', '/Game/Sciel/SK_Sciel_Chic_skin'), ('/Game/Mod/SK_Foo_2', '/Game/Mod/SK_foo_2')]
+          and got[0] == '/Game/Sciel/SK_Sciel_Chic_skin' and got[4] == '/Game/Mod/SK_foo_2', (ch, got))
+    check('  an import with an FName number is compared whole (T_Skin_2 is not respelled after T_skin)',
+          got[3] == '/Game/Mod/T_Skin_2', got)
+    check('  same length, only those two bytes changed (UTF-16 names are left alone)', len(new) == len(hdr)
+          and sum(a != b for a, b in zip(new, hdr)) == 2, sum(a != b for a, b in zip(new, hdr)))
+    check('  a name with no package of that spelling is not touched', e33utoc.fix_import_case(hdr, {})[1] == [])
+    check('zen_package_name: the name the package gives itself, with its number',
+          e33utoc.zen_package_name(hdr) == '/Game/Mod/BP_Skin'
+          and e33utoc.zen_package_name(zen_header(('/Game/Mod/BP_Skin', 2), imports)) == '/Game/Mod/BP_Skin_1')
+
+    ipn0 = struct.unpack_from('<i', hdr, 48)[0]
+
+    def refused(buf):
+        try:
+            e33utoc.fix_import_case(buf, real)
+            e33utoc.zen_package_name(buf)
+            return False
+        except e33utoc.UtocError:
+            return True
+        except Exception:                           # struct.error etc.: the relocator wouldn't skip it
+            return False
+    check('  not a zen package header, no imported names (offset out of range), or cut short: refused, '
+          'never a struct.error (the relocator skips such chunks)',
+          refused(b'\x00' * 40) and refused(zen_header(('/Game/Mod/BP_Skin', 0), imports, ipn=10 ** 6))
+          and refused(hdr[:4] + struct.pack('<I', len(hdr) + 999) + hdr[8:])
+          and refused(hdr[:ipn0] + struct.pack('<I', 1000) + hdr[ipn0 + 4:]),      # more names than bytes
+          [refused(b'\x00' * 40), refused(zen_header(('/Game/Mod/BP_Skin', 0), imports, ipn=10 ** 6))])
+    # 17 Oct audit: a UTF-16 name with a lone surrogate raised UnicodeDecodeError, and the whole
+    # container's links went unread; it is read as it is, and the other names are still fixed
+    lone = zen_header(('/Game/Mod/BP_Skin', 0), imports[:1] + [('/Game/W/MI_Wide', 0)], wide={'/Game/W/MI_Wide'})
+    ws = lone.find('/Game/W/MI_Wide'.encode('utf-16-le'))
+    lone = lone[:ws] + b'\x00\xd8' + lone[ws + 2:]                # first UTF-16 unit: an unpaired surrogate
+    try:
+        ch_lone = e33utoc.fix_import_case(lone, real)[1]
+    except Exception as e:
+        ch_lone = repr(e)
+    check('  a UTF-16 name with an unpaired surrogate: no error, the other links are still fixed',
+          ch_lone == [('/Game/Sciel/SK_Sciel_Chic_Skin', '/Game/Sciel/SK_Sciel_Chic_skin')], ch_lone)
+    # the spellings the repair uses: the mod packages' own names only (PC 17 Oct audit: the game's
+    # file index says Civil/Textures, its package is Civil/textures, and the mod links to the latter)
+    names = e33_relocate.real_names([['/Game/A/SK_Body_skin', '/Game/B/MI_X'], ['/Game/B/mi_x', '/Game/C/T_Y']])
+    check('real_names: the mod packages\' own names; a name spelled two ways is left out',
+          names == {'/game/a/sk_body_skin': '/Game/A/SK_Body_skin', '/game/c/t_y': '/Game/C/T_Y'}, names)
+    check('  needs_case_repair: only imports that differ in case from one of them',
+          e33_relocate.needs_case_repair({'/Game/A/SK_Body_Skin', '/Game/C/T_Y', '/Game/Characters/Maelle/Civil/Textures/MI_Top'},
+                                         names) == ['/Game/A/SK_Body_Skin'])
     # the Tools zip holds every module the relocator imports (1.2.0/1.2.1 shipped without e33tex.py)
     import re as _re
     tools = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools')
@@ -158,6 +235,18 @@ def main():
     spec.loader.exec_module(br)
     missing = sorted(m + '.py' for m in need if m + '.py' not in br.TOOL_FILES)
     check('the Tools zip lists every module the relocator imports', not missing, missing)
+    # the zip ships a list of docs (the maintainer's notes stay out): every listed doc exists, every
+    # tracked player doc is listed, and no shipped doc links to one left out
+    docs = os.path.join(os.path.dirname(tools), 'docs')
+    left_out = {'README.md', 'index.md', 'runbook.md'}
+    on_disk = {f for f in os.listdir(docs) if f.endswith('.md')}
+    gone = [f for f in br.DOC_FILES if f not in on_disk]
+    unlisted = sorted(on_disk - set(br.DOC_FILES) - left_out)
+    dead = sorted(f'{f} -> {t}' for f in br.DOC_FILES if f in on_disk
+                  for t in _re.findall(r'\]\((?:\./)?([\w.-]+\.md)', open(os.path.join(docs, f), encoding='utf-8').read())
+                  if t not in br.DOC_FILES)
+    check('the Tools zip docs: all listed exist, none forgotten, no link to a doc left out',
+          not gone and not unlisted and not dead, (gone, unlisted, dead))
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0
 

@@ -22,7 +22,7 @@ Nothing is queued to the game thread from another thread (see "threading" below)
 ]]
 
 local MOD = "E33Wardrobe"
-local VERSION = "1.3.0"                         -- the same as tools/e33common.py VERSION
+local VERSION = "1.3.1"                         -- the same as tools/e33common.py VERSION
 local KEYS = {
     menu = { "DEL", {} },
     menuUp = { "UP_ARROW", { "CONTROL" } }, menuDown = { "DOWN_ARROW", { "CONTROL" } },
@@ -58,14 +58,16 @@ end
 local modDir = (scriptDir:gsub("([\\/])[Ss]cripts[\\/]$", "%1"))
 local FILES = { SEL = modDir .. "selection.txt", DUMP = modDir .. "dump.txt", SETTINGS = modDir .. "settings.txt",
                 PRESETS = modDir .. "presets.txt", FAV = modDir .. "favorites.txt", LIVE = modDir .. "live_log.txt",
-                LIVE_PREV = modDir .. "live_log_previous.txt", REPORT = modDir .. "report.txt" }
+                LIVE_PREV = modDir .. "live_log_previous.txt", REPORT = modDir .. "report.txt",
+                COMMANDS = modDir .. "commands.txt" }
 
 -- Runtime settings, changed from the menu and kept in settings.txt.
 local SETTINGS = { scoping = true, auto_apply = true, recheck_ms = 700, side = "right", scale = 100,
                    block_look = true, cursor = true, ui_input = false, legacy_keys = false,
                    random_off = false, slideshow_s = 4, locks = "", wear = "", match_groups = true,
                    record = true, auto_report = false, show_technical = false, tab = "", peek_s = 3,
-                   auto_wear = true, clean = false }
+                   auto_wear = true, clean = false, scene_copies = true, trace = true,
+                   b_soft = "auto", b_swap = "off" }
 local DEFAULT_SETTINGS = {}
 for k, v in pairs(SETTINGS) do DEFAULT_SETTINGS[k] = v end
 
@@ -187,6 +189,115 @@ local TICK_MS = 50
 local HAS_GT_LOOP = type(LoopInGameThreadWithDelay) == "function"
 local gtDepth = 0
 local GT_STATE, GT_STATE_SINCE, GT_BEAT = "idle", os.time(), os.time()   -- read by the watchdog
+-- Breadcrumbs for freezes: before each engine call that could hang, the game thread notes what it
+-- is about to do (plain strings, no engine calls). When the game thread stalls, the watchdog writes
+-- the last ones, so the log names the call that never returned (no memory dump needed).
+-- Also the numbers behind stutter: time per actor and per pass, game-thread gaps (hitches).
+-- settings.txt "trace = false" turns the breadcrumbs off.
+local TRACE = { ring = {}, n = 0, size = 40, step = "-", at = 0, on = true, beat = nil,
+                tickMs = 0, lastTick = nil, lastHitch = -10,
+                st = { actors = 0, actorMs = 0, slowest = 0, slowName = "", sets = 0, passes = 0, passMs = 0,
+                       hitches = 0, worst = 0, since = os.clock() } }
+local function step(s)
+    if not TRACE.on then return end
+    local t = os.clock()
+    local acc = TRACE.acc                          -- in a timed look: time per step, for "slow look"
+    if acc then acc[TRACE.step] = (acc[TRACE.step] or 0) + (t - TRACE.at) end
+    TRACE.step, TRACE.at = s, t
+    local e = TRACE.ring[TRACE.n]
+    if e and e.s == s then e.t, e.k = t, (e.k or 1) + 1 return end   -- a repeat: counted, not another line
+    TRACE.n = TRACE.n % TRACE.size + 1
+    TRACE.ring[TRACE.n] = { t = t, s = s }
+end
+TRACE.on = SETTINGS.trace ~= false
+local B = {}                    -- the redesign-B probe (see "redesign B probe" below)
+-- Engine reads kept for the rest of ONE top-level game-thread call (onGT; the loop runs each tick
+-- as one), because every Lua -> UE4SS call costs time and the same materials, meshes and classes
+-- are read again and again in a look or a pass. Safe within one call: the engine frees and reuses
+-- objects only between frames (garbage collection), so an address names the same object until
+-- the call ends. Created at the start of the call, dropped at its end; nil outside game-thread
+-- calls (nothing is kept there). Started again after anything that runs the game's own code or
+-- loads assets (TRACE.fresh), and setTexture forgets what it changes (TRACE.forget).
+TRACE.memo = nil
+TRACE.fresh = function()
+    if TRACE.memo or gtDepth > 0 then TRACE.memo = { tp = {} } end
+end
+-- f(o, ...) once per game-thread call for the same object (o valid); its results are shared, so
+-- callers must not change them
+TRACE.once = function(kind, o, f, ...)
+    local memo = TRACE.memo
+    if not memo then return f(o, ...) end
+    local okA, a = pcall(function() return o:GetAddress() end)
+    if not okA or a == nil then return f(o, ...) end
+    local m = memo[kind]
+    if not m then m = {} memo[kind] = m end
+    local r = m[a]
+    if r == nil then r = table.pack(f(o, ...)) m[a] = r end
+    return table.unpack(r, 1, r.n)
+end
+-- Scene actors (battle, cutscene, dialogue, level sequence) as they begin play, so the live log
+-- shows which scene the game's character copies belong to. One name lookup per class, cached.
+TRACE.sceneCls, TRACE.sceneAt = {}, {}
+TRACE.scene = function(a)
+    local function ok(o)                        -- valid() is defined further down
+        local okv, r = pcall(function() return o:IsValid() end)
+        return okv and r == true
+    end
+    if not ok(a) then return end
+    local okc, c = pcall(function() return a:GetClass() end)
+    if not okc or not ok(c) then return end
+    local okA, addr = pcall(function() return c:GetAddress() end)
+    if not okA then return end
+    local name = TRACE.sceneCls[addr]
+    if name == nil then
+        local okn, n = pcall(function() return c:GetFName():ToString() end)
+        n = okn and n or ""
+        local low = n:lower()
+        name = (low:find("battle") or low:find("cine") or low:find("dialog") or low:find("sequence")
+                or low:find("encounter") or low:find("cutscene")) and n or false
+        TRACE.sceneCls[addr] = name
+    end
+    if not name then return end
+    local now = os.clock()
+    if now - (TRACE.sceneAt[name] or -10) < 5 then return end
+    TRACE.sceneAt[name] = now
+    live("scene: %s began", name)
+end
+-- "Busy": a burst of new actors (a map, a cutscene or a battle being set up) or a long frame in
+-- the last 0.5 s. New skins and passes wait for calm (at most 10 s): both freezes on PC were in
+-- the mod's look at a just-spawned skin during such a burst.
+TRACE.bp, TRACE.busyAt, TRACE.tick = 0, -1000, 0   -- loop ticks: of the last burst, now
+TRACE.busy = function() return TRACE.tick - TRACE.busyAt < 10 end           -- 10 ticks = 0.5 s
+TRACE.timed = function(name, f, ...)          -- f(...) with its time added to the statistics
+    local outer = TRACE.acc
+    TRACE.acc = TRACE.on and {} or nil
+    step("look " .. name)
+    local t0 = os.clock()
+    local ok, err = pcall(f, ...)
+    local t1 = os.clock()
+    local ms = (t1 - t0) * 1000
+    local acc = TRACE.acc
+    TRACE.acc = outer
+    local st = TRACE.st
+    st.actors, st.actorMs = st.actors + 1, st.actorMs + ms
+    if ms > st.slowest then st.slowest, st.slowName = ms, name end
+    if ms >= 100 then
+        -- where a slow look spent its time (PC: 150-310 ms looks, of which the logged loads and
+        -- mesh sets explained only ~20 ms)
+        local parts = {}
+        if acc then
+            acc[TRACE.step] = (acc[TRACE.step] or 0) + (t1 - TRACE.at)
+            for k, v in pairs(acc) do parts[#parts + 1] = { k, v } end
+            table.sort(parts, function(a, b) return a[2] > b[2] end)
+            for i = 1, #parts do
+                parts[i] = i <= 4 and string.format("%s %d ms", parts[i][1], math.floor(parts[i][2] * 1000 + 0.5)) or nil
+            end
+        end
+        live("slow look: %s %d ms; most time in: %s", name, math.floor(ms + 0.5),
+            #parts > 0 and table.concat(parts, ", ") or "(trace = false)")
+    end
+    return ok, err, ms
+end
 local INBOX = {}                -- events or functions posted from other threads
 local SCHED = {}                -- the mod's game-thread timers: { due = loop tick, f = function }
 local loopTicks = 0
@@ -219,11 +330,16 @@ end
 
 local function onGT(f, ...)
     gtDepth = gtDepth + 1
-    if gtDepth == 1 then GT_STATE, GT_STATE_SINCE = "mod work", os.time() end
+    if gtDepth == 1 then
+        GT_STATE, GT_STATE_SINCE = "mod work", os.time()
+        TRACE.fresh()
+    end
     local ok, err = pcall(f, ...)
     if gtDepth == 1 then
         runCallbackEnd()
+        TRACE.memo = nil
         GT_STATE, GT_STATE_SINCE = "idle", os.time()
+        if TRACE.step ~= "idle" then step("idle") end
     end
     gtDepth = gtDepth - 1
     if not ok then log("error: %s", tostring(err)) end
@@ -340,7 +456,7 @@ end
 
 local FORCE_CACHE = {}        -- character -> mesh worn over any outfit (or false)
 
-local function rebuildActive() ACTIVE_CACHE = {} FORCE_CACHE = {} end
+local function rebuildActive() ACTIVE_CACHE = {} FORCE_CACHE = {} if B.changed then pcall(B.changed) end end
 
 -- "Wear over any outfit": slots whose variant mesh replaces the outfit the character wears now,
 -- instead of only the outfit the mod was made for (Infernal Herald = Potato bag outfit, etc.).
@@ -386,7 +502,8 @@ local function activeFor(char)
                         local k = orig:lower()
                         -- under: the earlier pick's entry for the same asset, used where this one
                         -- doesn't apply (forOutfit)
-                        a[k] = { pkg = e[1], obj = e[2], class = e[3], meshes = meshes, vid = v.id, under = a[k] }
+                        a[k] = { pkg = e[1], obj = e[2], class = e[3], meshes = meshes, vid = v.id, under = a[k],
+                                 orig = orig }
                     end
                 end
             end
@@ -452,20 +569,62 @@ local function valid(o)
     return ok and r == true
 end
 
+-- Valid for UE4SS AND safe to read: not being destroyed, not garbage, fully loaded. UE4SS's
+-- IsValid looks at none of this (PC: the mod wrote to actors already renamed "None"; both freezes
+-- happened while reading actors the game had just spawned during loading). UE 5.4 values, as
+-- numbers (UE4SS's own flag tables are from UE4): RF_NeedLoad 0x400, RF_NeedPostLoad 0x1000,
+-- RF_NeedPostLoadSubobjects 0x2000, RF_BeginDestroyed 0x8000, RF_FinishDestroyed 0x10000;
+-- internal Garbage 1<<21, Async 1<<26, AsyncLoading 1<<27. If UE4SS can't answer, it counts as
+-- alive (as before). Skips are counted in the per-minute stats line. known: o was just found valid.
+-- Which of alive()'s flags an object has (names), for the log; nil if none or UE4SS can't say.
+TRACE.FLAGS = { { 0x400, "NeedLoad" }, { 0x1000, "NeedPostLoad" }, { 0x2000, "NeedPostLoadSubobjects" },
+                { 0x8000, "BeginDestroyed" }, { 0x10000, "FinishDestroyed" } }
+TRACE.IFLAGS = { { 0x200000, "Garbage" }, { 0x4000000, "Async" }, { 0x8000000, "AsyncLoading" } }
+TRACE.aliveWhy = function(o)
+    if not valid(o) then return "invalid" end
+    local out = {}
+    for _, f in ipairs(TRACE.FLAGS) do
+        local ok, r = pcall(function() return o:HasAnyFlags(f[1]) end)
+        if ok and r == true then out[#out + 1] = f[2] end
+    end
+    for _, f in ipairs(TRACE.IFLAGS) do
+        local ok, r = pcall(function() return o:HasAnyInternalFlags(f[1]) end)
+        if ok and r == true then out[#out + 1] = f[2] .. " (internal)" end
+    end
+    return #out > 0 and table.concat(out, ", ") or nil
+end
+
+local function alive(o, known)
+    if not known and not valid(o) then return false end
+    local okF, f = pcall(function() return o:HasAnyFlags(0x1B400) end)
+    local okI, i = pcall(function() return o:HasAnyInternalFlags(0x0C200000) end)
+    if (okF and f == true) or (okI and i == true) then
+        TRACE.st.skipped = (TRACE.st.skipped or 0) + 1
+        return false
+    end
+    return true
+end
+
 -- "/Game/A/B" for a top-level asset ("Class /Game/A/B.B"). Subobjects such as the game's
 -- dynamic material instances ("... /Game/Map.Map:PersistentLevel.Actor.Comp.MID_0") and
--- transient objects return nil.
-local function pkgPath(obj)
-    if not valid(obj) then return nil end
+-- transient objects return nil. The second value is the object's name ("B", the same as leafName),
+-- so callers that need both make one call. known: obj was just found valid.
+local function pkgPath(obj, known)
+    if not known and not valid(obj) then return nil end
     local ok, full = pcall(function() return obj:GetFullName() end)
     if not ok or not full then return nil end
     local path, rest = full:match("^%S+%s+([^%.:]+)%.(.*)$")
     if not path or path:sub(1, 1) ~= "/" or rest:find("[%.:]") then return nil end
     if path:find("^/Engine/Transient") or path:find("^/Temp/") then return nil end
-    return path
+    return path, rest
 end
 
+-- Never call a method on an object UE4SS hands back as "invalid" (a missing link, a null array
+-- entry): inside UE4SS that reads address 0 and is an access violation, which pcall can't catch.
+-- PC: one froze the game (GetClass() on a missing attach parent; a frame limiter's exception
+-- handler then hung instead of letting the game crash).
 local function fullPath(obj)
+    if not valid(obj) then return nil end
     local ok, full = pcall(function() return obj:GetFullName() end)
     return ok and full and full:match("^%S+%s+(.+)$") or nil
 end
@@ -478,16 +637,31 @@ local function fname(s)
     return FName(s)
 end
 
-local function leafName(obj)
+local function leafName(obj, known)
+    if not known and not valid(obj) then return nil end
     local ok, n = pcall(function() return obj:GetFName():ToString() end)
     return ok and n or nil
 end
 
+-- "class address|class name" of a valid object, and its class (false: none). Once per call.
+TRACE.classKey = function(o)
+    return TRACE.once("class", o, function()
+        local okc, c = pcall(function() return o:GetClass() end)
+        if not okc or not valid(c) then return false end
+        local okk, key = pcall(function() return c:GetAddress() .. "|" .. tostring(leafName(c, true)) end)
+        return okk and key or tostring(c), c
+    end)
+end
+
 -- Both kinds of arrays: TArray properties (userdata with ForEach) and UFunction return
--- values (plain Lua tables of RemoteUnrealParam that need :get()).
+-- values (plain Lua tables of RemoteUnrealParam that need :get()). A property the object doesn't
+-- have (StaticMesh.Materials, Material.TextureParameterValues) reads as an invalid object: no
+-- ForEach on that (see fullPath).
 local function arrayItems(arr)
     local out = {}
     if arr == nil then return out end
+    local okv, isv = pcall(function() return arr:IsValid() end)
+    if okv and isv == false then return out end
     if type(arr) == "table" and arr.ForEach == nil then
         for _, e in ipairs(arr) do
             local ok, v = pcall(function() return e:get() end)
@@ -502,39 +676,122 @@ end
 -- Relocated assets are not in the game's AssetRegistry.bin, which UE4SS's LoadAsset relies on.
 -- AssetRegistryHelpers.GetAsset loads straight from the package path (the method UE4SS's own
 -- BPModLoaderMod uses for mod assets), so it is tried first.
+-- GetAsset finds an asset already in memory or loads it: 0-1 ms on PC. Until fix14 StaticFindObject
+-- came first, and every asset it didn't find cost 13 ms (small maps) to 27 ms (world map) - it
+-- seems to search all objects - although GetAsset then had most of them at once (PC, 15 Oct: 179
+-- such lookups made up most of the 150-360 ms looks). StaticFindObject is only the last resort.
+-- "loading" is logged before the first use of an asset in a map (a hang there names it).
 local ARH, FAILED = nil, {}
+TRACE.used = {}                 -- assets asked for in this map (cleared on map load)
 local function loadObj(pkg, obj)
     local full = pkg .. "." .. obj
-    local o = StaticFindObject(full)
-    if valid(o) then return o end
+    if not TO_ORIGINAL[pkg:lower()] then
+        -- a game asset (not one of the mod's relocated copies, which the game never streams) may be
+        -- streaming in right now: GetAsset would load it synchronously on the game thread. Found
+        -- and still loading = not now, as before fix14. These are mostly in memory (cheap hits).
+        step("StaticFindObject " .. full)
+        local o = StaticFindObject(full)
+        if valid(o) then return alive(o) and o or nil end
+    end
     if FAILED[full] then return nil end
-    if liveF then live("    loading %s", full) end
+    if liveF and not TRACE.used[full] then live("    loading %s", full) end
+    local first = not TRACE.used[full]
+    TRACE.used[full] = true
     local t0 = os.clock()
     if not valid(ARH) then ARH = StaticFindObject("/Script/AssetRegistry.Default__AssetRegistryHelpers") end
     if valid(ARH) then
+        step("GetAsset " .. full)
         local ok, r = pcall(function() return ARH:GetAsset({ PackageName = fname(pkg), AssetName = fname(obj) }) end)
+        -- a real load runs engine code: nothing read before is kept. An asset already in memory
+        -- comes back in well under 1 ms (PC: 0 ms for most), so a call that took 1 ms or more loaded.
+        local ms = (os.clock() - t0) * 1000
+        if ms >= 1 or not (ok and valid(r)) then TRACE.fresh() end
+        if ms >= 50 and liveF then live("    slow GetAsset: %s took %d ms", full, math.floor(ms + 0.5)) end
         if ok and valid(r) then
-            if liveF then live("    loaded (%d ms)", math.floor((os.clock() - t0) * 1000 + 0.5)) end
+            if liveF and first then live("    loaded (%d ms)", math.floor(ms + 0.5)) end
+            if not alive(r, true) then return nil end           -- still loading: the next look gets it
             return r
         end
     end
+    step("load (LoadAsset) " .. full)
     pcall(LoadAsset, full)
-    o = StaticFindObject(full)
-    if valid(o) then return o end
+    step("StaticFindObject " .. full)
+    local o = StaticFindObject(full)
+    if valid(o) then return alive(o, true) and o or nil end
     FAILED[full] = true
     log("could not load %s", full)
     return nil
 end
 
 local CLS = {}
-local function cls(path)
-    if not valid(CLS[path]) then CLS[path] = StaticFindObject(path) end
+local function cls(path)                       -- engine classes; checked once per game-thread call
+    local memo = TRACE.memo
+    if memo and memo.cls and memo.cls[path] then return CLS[path] end
+    if not valid(CLS[path]) then
+        CLS[path] = StaticFindObject(path)
+        if not valid(CLS[path]) then return CLS[path] end
+    end
+    if memo then memo.cls = memo.cls or {} memo.cls[path] = true end
     return CLS[path]
 end
 
-local function isA(o, path)
+-- A property read by name only when its type is known to be safe to read. PC dump: a character's
+-- "Face" property was a weak/soft reference (bytes 43 00 00 00 04 00 00 00: object index 0x43,
+-- serial 4), and this UE4SS build reads those as a plain object pointer and crashes inside the
+-- game (UE4SS issue #1433), before any check can run. The types come from the class itself
+-- (metadata, read once per class). Where UE4SS can't list them, the read goes ahead as before.
+local PROP_TYPES = {}         -- class address|name -> { property name -> type name } (false: can't list)
+local function propOf(obj, name, ...)
+    if not valid(obj) then return nil end
+    local key, c = TRACE.classKey(obj)
+    if not key then return nil end
+    -- A read by name walks the class's property list. PC 17 Oct crash (UE4SS AV in
+    -- FField::GetFName under UStruct::FindProperty): a camp actor's "Face", 3 s after a fast
+    -- travel into camp. Guess: its class was still loading or being destroyed. Such a class is
+    -- not read; the object is looked at again later. Once per class per game-thread call.
+    if not TRACE.once("classAlive", c, function(cl) return alive(cl, true) end) then
+        TRACE.clsSkip = TRACE.clsSkip or {}
+        if not TRACE.clsSkip[key] then
+            TRACE.clsSkip[key] = true
+            live("  skipped reading %s of %s: its class is %s", tostring(name), tostring(leafName(obj)),
+                tostring(TRACE.aliveWhy(c) or "not ready"))
+        end
+        return nil
+    end
+    local t = PROP_TYPES[key]
+    if t == nil then
+        t = {}
+        local listed, s, depth = false, c, 0
+        while valid(s) and depth < 16 do
+            local okF = pcall(function()
+                s:ForEachProperty(function(pr)
+                    local n = pr:GetFName():ToString()
+                    if t[n] == nil then t[n] = pr:GetClass():GetFName():ToString() end
+                end)
+            end)
+            listed = listed or okF
+            local okS, sup = pcall(function() return s:GetSuperStruct() end)
+            if not okS then break end
+            s, depth = sup, depth + 1
+        end
+        if not listed then t = false end
+        PROP_TYPES[key] = t
+    end
+    if t then
+        local ty, ok = t[name], false
+        for i = 1, select("#", ...) do if ty == select(i, ...) then ok = true end end
+        if not ok then return nil end
+    end
+    local okv, v = pcall(function() return obj[name] end)
+    if okv then return v end
+    return nil
+end
+
+local function isA(o, path, known)            -- known: o was just found valid
     local c = cls(path)
-    if not valid(c) then return false end
+    local memo = TRACE.memo
+    if not (memo and memo.cls and memo.cls[path]) and not valid(c) then return false end
+    if not known and not valid(o) then return false end
     local ok, r = pcall(function() return o:IsA(c) end)
     return ok and r
 end
@@ -717,11 +974,23 @@ local function inferCharacters()
 end
 
 local CHAR_OF = {}            -- actor address -> {name = full name, char = character} (from assign hooks)
+-- Actors the game dressed as "Default" (the copies it makes for dialogue and battle), and their
+-- owners: address -> full name. settings.txt "scene_copies = false" leaves them alone (a test:
+-- PC, dialogue stopped appearing while the mod kept re-dressing such copies).
+local SCENE_COPY = {}
+-- Skin actors seen, by address: { a = object, name = full name, owner = owner's full name }. When
+-- the game re-assigns a skin to an owner, these are what get looked at again. Never read through
+-- the owner's properties (owner.BP_CharacterSkinComponent.SpawnedCharacterSkin): at the start of
+-- a battle such a reference can point to an object the game already freed, and UE4SS crashes
+-- while wrapping it (PC dump: IsA inside auto_construct_object), before any check can run.
+local KNOWN_SKINS = {}
 
 local function propString(o, name)
-    local ok, v = pcall(function() return o[name] end)
-    if not ok or v == nil then return nil end
+    local v = propOf(o, name, "NameProperty", "StrProperty", "TextProperty")
+    if v == nil then return nil end
     if type(v) == "string" then return v end
+    local okv, isv = pcall(function() return v:IsValid() end)    -- no such property: an invalid object
+    if okv and isv == false then return nil end
     local ok2, s = pcall(function() return v:ToString() end)
     if ok2 and type(s) == "string" then return s end
     return nil
@@ -735,50 +1004,72 @@ local function ownerOf(actor)
     return nil
 end
 
+-- An actor's skin components (BP_CharacterSkinComponent_C and its cutscene child), from its own
+-- component list, never through its properties: camp characters hold theirs in a Blueprint
+-- property, and reading camp Blueprint properties by name crashed UE4SS twice (see meshComponents).
+-- The component class is looked up each time (a Blueprint class: no address kept across frames).
+TRACE.skinComps = function(o)
+    return TRACE.once("skinComps", o, function()
+        step("skin components: K2_GetComponentsByClass")
+        local okc, c = pcall(StaticFindObject,
+            "/Game/Gameplay/CharacterCustomization/Blueprints/BP_CharacterSkinComponent.BP_CharacterSkinComponent_C")
+        if not (okc and valid(c)) then return {} end
+        local ok, arr = pcall(function() return o:K2_GetComponentsByClass(c) end)
+        local out = {}
+        for _, sc in ipairs(ok and arrayItems(arr) or {}) do if valid(sc) then out[#out + 1] = sc end end
+        return out
+    end)
+end
+
+-- Once per game-thread call per actor (a re-check asks before and while it looks at a skin);
+-- onAssigned forgets it when the game names the actor's character.
 local function characterOf(actor)
-    local known = CHAR_OF[actor:GetAddress()]
-    if known then
-        local ok, n = pcall(function() return actor:GetFullName() end)
-        if ok and n == known.name then return known.char end
-        CHAR_OF[actor:GetAddress()] = nil            -- address reused by a new object
-    end
-    local c
-    -- cinematic pawns name their character on their skin component
-    for _, comp in ipairs({ "BP_CinematicCharacterSkinComponent", "CinematicCharacterSkinComponent" }) do
-        local ok, sc = pcall(function() return actor[comp] end)
-        if ok and valid(sc) then
+    return TRACE.once("char", actor, function()
+        local known = CHAR_OF[actor:GetAddress()]
+        if known then
+            local ok, n = pcall(function() return actor:GetFullName() end)
+            if ok and n == known.name then return known.char end
+            CHAR_OF[actor:GetAddress()] = nil            -- address reused by a new object
+        end
+        local c
+        step("character: cutscene skin component")
+        -- cinematic, menu and camp pawns name their character on their skin component
+        for _, sc in ipairs(TRACE.skinComps(actor)) do
             c = normChar(propString(sc, "CharacterHardcodedName"))
             if c then return c end
         end
-    end
-    local owner = ownerOf(actor)
-    for _, o in ipairs({ owner, actor }) do
-        if valid(o) then
-            for _, prop in ipairs({ "CharacterHardcodedName", "HardcodedNameID", "CharacterName" }) do
-                c = normChar(propString(o, prop))
-                if c then return c end
-            end
-            local okd, data = pcall(function() return o.CharacterData end)
-            if okd and valid(data) then
-                c = normChar(propString(data, "HardcodedNameID"))
-                if c then return c end
-            end
-        end
-    end
-    -- last resort: exactly one character name in the skin class path (e.g. ".../Lune/BP_..._C")
-    local okc, clsObj = pcall(function() return actor:GetClass() end)
-    if okc and valid(clsObj) then
-        local p = (fullPath(clsObj) or ""):lower()
-        local only
-        for k, v in pairs(CHAR_ALIASES) do
-            if p:find("[^%a]" .. k .. "[^%a]") then
-                if only and only ~= v then return nil end
-                only = v
+        step("character: owner")
+        local owner = ownerOf(actor)
+        step("character: name properties of owner/actor")
+        for _, o in ipairs({ owner, actor }) do
+            if valid(o) then
+                for _, prop in ipairs({ "CharacterHardcodedName", "HardcodedNameID", "CharacterName" }) do
+                    c = normChar(propString(o, prop))
+                    if c then return c end
+                end
+                local data = propOf(o, "CharacterData", "ObjectProperty")
+                if valid(data) then
+                    c = normChar(propString(data, "HardcodedNameID"))
+                    if c then return c end
+                end
             end
         end
-        return only
-    end
-    return nil
+        -- last resort: exactly one character name in the skin class path (e.g. ".../Lune/BP_..._C")
+        step("character: class path")
+        local okc, clsObj = pcall(function() return actor:GetClass() end)
+        if okc and valid(clsObj) then
+            local p = (fullPath(clsObj) or ""):lower()
+            local only
+            for k, v in pairs(CHAR_ALIASES) do
+                if p:find("[^%a]" .. k .. "[^%a]") then
+                    if only and only ~= v then return nil end
+                    only = v
+                end
+            end
+            return only
+        end
+        return nil
+    end)
 end
 
 -- --------------------------------------------------------------------------- remapping
@@ -807,22 +1098,37 @@ end
 
 
 -- Asset that belongs to some variant (a relocated copy, or a mod-only original from the shared pak).
-local function variantOwned(obj)
-    local p = pkgPath(obj)
+local function variantOwned(obj, path)          -- path: obj's pkgPath, if known
+    local p = path or pkgPath(obj)
     if not p then return false end
     local k = p:lower()
     return TO_ORIGINAL[k] ~= nil or MOD_ONLY[k] == true
 end
 
-local function isMID(m) return valid(m) and isA(m, "/Script/Engine.MaterialInstanceDynamic") end
+local function isMID(m) return valid(m) and isA(m, "/Script/Engine.MaterialInstanceDynamic", true) end
 
 local GLOBAL_PARAMETER = 2                     -- EMaterialParameterAssociation::GlobalParameter
 
+-- Within one game-thread call, each material's result is kept (TRACE.memo.tp, by address) with the
+-- result of every parent on its chain, so parents shared by all slots and copies of a character
+-- are read once. Kept only for a chain read to its end (none of it loading). A result is shared:
+-- callers must not change it. setTexture forgets every result that includes the instance it sets.
 local function textureParams(mat)              -- key -> {info, tex}, child values win
-    local out, guard = {}, 0
-    local m = mat
-    while valid(m) and guard < 8 do
+    step("texture parameters of a material")
+    local memo = TRACE.memo and TRACE.memo.tp
+    local levels, guard, m, top, whole = {}, 0, mat, nil, true
+    while guard < 8 do
+        if not valid(m) then break end
+        local addr
+        if memo then
+            local okA, a = pcall(function() return m:GetAddress() end)
+            addr = okA and a or nil
+            local hit = addr and memo[addr]
+            if hit and guard + hit.hops <= 8 then top = hit break end
+        end
+        if not alive(m, true) then whole = false break end      -- loading or being destroyed
         guard = guard + 1
+        local own, seen = { addr = addr }, {}                    -- this level's parameters, in order
         local ok, arr = pcall(function() return m.TextureParameterValues end)
         if ok and arr then
             for _, tp in ipairs(arrayItems(arr)) do
@@ -834,15 +1140,53 @@ local function textureParams(mat)              -- key -> {info, tex}, child valu
                 end)
                 if okn and info and info.name then
                     local key = info.name:ToString() .. "|" .. tostring(info.assoc) .. "|" .. tostring(info.index)
-                    if out[key] == nil then out[key] = { info = info, tex = tp.ParameterValue } end
+                    if not seen[key] then
+                        seen[key] = true
+                        own[#own + 1] = { key, { info = info, tex = tp.ParameterValue } }
+                    end
                 end
             end
         end
+        levels[#levels + 1] = own
         local okp, parent = pcall(function() return m.Parent end)
         if not okp then break end
         m = parent
     end
-    return out
+    if guard >= 8 then whole = false end
+    -- from the top parent down: a level's own values, then its parent's (same order as one walk)
+    local below = top
+    for j = #levels, 1, -1 do
+        local own = levels[j]
+        local out, list, chain = {}, {}, {}
+        for _, it in ipairs(own) do out[it[1]] = it[2] list[#list + 1] = it end
+        if below then
+            for _, it in ipairs(below.list) do
+                if out[it[1]] == nil then out[it[1]] = it[2] list[#list + 1] = it end
+            end
+            for a in pairs(below.chain) do chain[a] = true end
+        end
+        if own.addr then chain[own.addr] = true end
+        below = { out = out, list = list, chain = chain, hops = (below and below.hops or 0) + 1 }
+        if memo and whole and own.addr then memo[own.addr] = below end
+    end
+    return below and below.out or {}
+end
+-- A texture parameter's texture: valid? and its path and name (read once per call, kept on tp).
+TRACE.tex = function(tp, wantPath)
+    if tp.ok == nil then tp.ok = valid(tp.tex) end
+    if wantPath and tp.ok and tp.path == nil then
+        local p, o = pkgPath(tp.tex, true)
+        tp.path, tp.obj = p or false, o
+    end
+    return tp.ok, tp.path or nil, tp.obj
+end
+-- mid's texture parameters are about to change: forget the kept results that include it
+TRACE.forget = function(mid)
+    local memo = TRACE.memo and TRACE.memo.tp
+    if not memo then return end
+    local okA, a = pcall(function() return mid:GetAddress() end)
+    if not okA then TRACE.memo.tp = {} return end
+    for k, e in pairs(memo) do if e.chain[a] then memo[k] = nil end end
 end
 
 local function scalarParams(mat)               -- name -> value, child values win
@@ -864,6 +1208,7 @@ local function scalarParams(mat)               -- name -> value, child values wi
 end
 
 local function setTexture(mid, info, tex)
+    TRACE.forget(mid)
     if info.assoc ~= nil and info.assoc ~= GLOBAL_PARAMETER then
         local ok = pcall(function()
             mid:SetTextureParameterValueByInfo({ Name = info.name, Association = info.assoc, Index = info.index }, tex)
@@ -898,16 +1243,18 @@ local function replaceTracked(actor, oldMid, newMid)
     local owner = ownerOf(actor)
     for _, o in ipairs({ owner, actor }) do
         if valid(o) then
-            for _, compName in ipairs({ "BP_CharacterSkinComponent", "BP_CinematicCharacterSkinComponent" }) do
-                local ok, c = pcall(function() return o[compName] end)
-                if ok and valid(c) then table.insert(holders, { c, "CurrentCharacterSkinMaterialInstances" }) end
+            for _, c in ipairs(TRACE.skinComps(o)) do         -- not through o's properties
+                table.insert(holders, { c, "CurrentCharacterSkinMaterialInstances" })
             end
             table.insert(holders, { o, "AllMeshMaterials" })
         end
     end
     for _, h in ipairs(holders) do
         pcall(function()
-            local arr = h[1][h[2]]
+            local arr = propOf(h[1], h[2], "ArrayProperty")
+            if arr == nil then return end
+            local okv, isv = pcall(function() return arr:IsValid() end)   -- no such property: invalid
+            if okv and isv == false then return end
             local n = arr:GetArrayNum()
             for i = 1, n do
                 local e = arr[i]
@@ -929,10 +1276,9 @@ end
 
 -- Material that should end up on slot i. `meshDefault`/`oldDefault` are the new/previous mesh's
 -- own materials for the slot; `meshChanged` says the mesh was swapped in this pass.
-local function chooseMaterial(active, base, meshDefault, oldDefault, meshChanged)
-    local bpath = pkgPath(base)
+local function chooseMaterial(active, base, bpath, bname, meshDefault, oldDefault, meshChanged)
     if not bpath then return nil end
-    local p, o, mode = wanted(active, bpath, leafName(base))
+    local p, o, mode = wanted(active, bpath, bname)
     if meshChanged and meshDefault then
         -- The slot showed the old mesh's own material (the game builds its instances from the
         -- mesh), or a material left over from another variant: follow the new mesh, as a
@@ -941,7 +1287,7 @@ local function chooseMaterial(active, base, meshDefault, oldDefault, meshChanged
         -- instance of the OLD mesh's material (vanilla Bottom), and the new mesh may want another
         -- one there (a barefoot variant: Hide_Material on the boots' slot). Remapping the old
         -- material instead left boot parts visible (PC). fixSlot remaps the mesh's choice.
-        if (oldDefault and pkgPath(oldDefault) == bpath) or variantOwned(base) then
+        if (oldDefault and pkgPath(oldDefault) == bpath) or variantOwned(base, bpath) then
             if pkgPath(meshDefault) ~= bpath then return meshDefault end
             if mode ~= "map" then return nil end      -- same material: only a variant's remap
         end
@@ -953,14 +1299,15 @@ local function chooseMaterial(active, base, meshDefault, oldDefault, meshChanged
 end
 
 -- Empty texture slots. Some mods' materials point at a texture that isn't where they look for it
--- (PC: Cheeki's body material, Color_MAIN empty, so the body showed grey, while the mod ships
--- Lune_Body_Basecolor-nude and nothing uses it). Before a body mesh is changed, the textures its
+-- (PC: an outfit mod's body material, Color_MAIN empty, so the body showed grey, while the mod ships
+-- Lune_Body_Basecolor-<suffix> and nothing uses it). Before a body mesh is changed, the textures its
 -- materials show are noted per character. Afterwards an empty texture parameter gets, in order:
 -- an unused texture of the picked variants named like the one it had ("Lune_Body_Basecolor" ->
--- "Lune_Body_Basecolor-nude"), else the texture it had under that name.
+-- "Lune_Body_Basecolor-<suffix>"), else the texture it had under that name.
 Wear.donor = {}                 -- character -> parameter name -> texture last seen on the body
 Wear.noteTextures = function(comp, char)
     if not char then return end
+    step("Wear: note the textures shown")
     local d = Wear.donor[char] or {}
     Wear.donor[char] = d
     local ok, n = pcall(function() return comp:GetNumMaterials() end)
@@ -968,13 +1315,13 @@ Wear.noteTextures = function(comp, char)
         local okm, m = pcall(function() return comp:GetMaterial(i) end)
         if okm and valid(m) then
             for key, tp in pairs(textureParams(m)) do
-                if valid(tp.tex) then d[key:match("^[^|]*")] = tp.tex end
+                if TRACE.tex(tp) then d[key:match("^[^|]*")] = tp.tex end
             end
         end
     end
 end
-local function namedLike(active, before)
-    local stem = (leafName(before) or ""):lower()
+Wear.likeTex = function(active, name)          -- the mod's texture named like `name`, without loading it
+    local stem = (name or ""):lower()
     if #stem < 4 then return nil end
     local best
     for orig, e in pairs(active or {}) do
@@ -985,12 +1332,16 @@ local function namedLike(active, before)
             end
         end
     end
+    return best
+end
+local function namedLike(active, before, name)   -- name: before's name, if known
+    local best = Wear.likeTex(active, name or leafName(before))
     return best and loadObj(best.pkg, best.obj) or nil
 end
 -- An unused texture of the picked variants that fits the parameter by name, for an empty link whose
 -- old texture has no namesake in the mod. Words of the parameter must be in the texture name;
 -- "body" counts in favour, words the parameter doesn't have (underwear, bikini) against. (Sciel's
--- grey Cheeki body turned out to be empty material slots, not this: see Wear.fillSlots.)
+-- grey outfit-mod body turned out to be empty material slots, not this: see Wear.fillSlots.)
 local KIND_WORDS = { color = "color", colour = "color", albedo = "color", diffuse = "color", normal = "normal",
                      roughness = "roughness", orm = "roughness", cavity = "cavity", emissive = "emissive",
                      glow = "emissive", underwear = "underwear", btls = "btls" }
@@ -1026,7 +1377,7 @@ Wear.fillEmpty = function(actor, comp, char, n, active)
             local mo, vid = Wear.origOf(isMID(m) and m.Parent or m, active)
             for key, tp in pairs(textureParams(m)) do
                 local name = key:match("^[^|]*")
-                if not valid(tp.tex) then                         -- an empty link reads as an invalid object
+                if not TRACE.tex(tp) then                         -- an empty link reads as an invalid object
                     local rule = mo and (rules.tex[mo .. "|" .. name] or rules.tex[mo .. "|*"])
                     local tex, why
                     if rule == "game" then
@@ -1056,20 +1407,24 @@ Wear.fillEmpty = function(actor, comp, char, n, active)
 end
 
 -- Empty material slots. Some mods' meshes leave a slot without a material and count on the game's
--- skin Blueprint to fill it (PC report 2026-10-11: Cheeki's Sciel mesh, mat1 and mat2 nil, so the
+-- skin Blueprint to fill it (PC report 2026-10-11: an outfit mod's Sciel mesh, mat1 and mat2 nil, so the
 -- body showed grey). Wear clears the old outfit's materials, so nothing fills them. An empty slot
 -- gets the material the body showed before (the game's own, with the character's skin settings):
 -- the one in the slot of the same name, else the skin material. On it, the mod's textures named
--- like the ones it shows ("body_high_BaseColor" -> "body_high_BaseColor-nude") replace them.
-Wear.slotNames = function(mesh)                 -- slot -> lower-case slot name of a mesh asset
-    local out = {}
-    pcall(function()
-        for i, sm in ipairs(arrayItems(mesh.Materials)) do
-            local ok, s = pcall(function() return sm.MaterialSlotName:ToString() end)
-            if ok and type(s) == "string" and s ~= "" and s ~= "None" then out[i - 1] = s:lower() end
-        end
+-- like the ones it shows ("body_high_BaseColor" -> "body_high_BaseColor-<suffix>") replace them.
+Wear.slotNames = function(mesh)                 -- slot -> lower-case slot name of a mesh asset (shared: don't change)
+    if not valid(mesh) then return {} end
+    return TRACE.once("slotNames", mesh, function()
+        step("Wear: slot names of " .. tostring(leafName(mesh, true)))
+        local out = {}
+        pcall(function()
+            for i, sm in ipairs(arrayItems(mesh.Materials)) do
+                local ok, s = pcall(function() return sm.MaterialSlotName:ToString() end)
+                if ok and type(s) == "string" and s ~= "" and s ~= "None" then out[i - 1] = s:lower() end
+            end
+        end)
+        return out
     end)
-    return out
 end
 Wear.isSkin = function(m, name)
     if name and (name:find("body", 1, true) or name:find("skin", 1, true)) then return true end
@@ -1080,9 +1435,10 @@ Wear.isSkin = function(m, name)
     return ((pkgPath(base) or ""):lower():match("/mi_body[^/]*$")) ~= nil
 end
 Wear.before = function(comp, mesh, prev)         -- what the body shows before its mesh changes
+    step("Wear: materials before the change")
     local b = { byName = {}, skin = nil }
     local function add(m, nm)
-        if not (valid(m) and isA(m, "/Script/Engine.MaterialInterface")) then return end
+        if not (valid(m) and isA(m, "/Script/Engine.MaterialInterface", true)) then return end
         if nm and not b.byName[nm] then b.byName[nm] = m end
         if not b.skin and Wear.isSkin(m, nm) then b.skin = m end
     end
@@ -1096,6 +1452,46 @@ Wear.before = function(comp, mesh, prev)         -- what the body shows before i
         if okm then add(m, names[i]) end
     end
     return b
+end
+-- Which material fills an empty slot: the body's material for a slot of that name, else its skin
+-- material, else a skin material of the game's own version of the mod's mesh, whichever has the
+-- most textures the variant brings a namesake for. PC 17 Oct: Sciel's Chic outfit is a Lune mesh,
+-- so "the body's skin material" was MI_Body_Lune (Lune's skin tone, none of the mod's textures fit);
+-- the game's SK_Sciel_Bikini_B_skin uses MI_Body_Sciel, whose textures the mod replaces.
+Wear.likeCount = function(active, m)
+    local n = 0
+    for _, tp in pairs(textureParams(m)) do
+        local okT, _, tname = TRACE.tex(tp, true)
+        if okT and Wear.likeTex(active, tname) then n = n + 1 end
+    end
+    return n
+end
+Wear.pickDonor = function(active, mo, before, nm)
+    local cands = {}
+    local function add(m, how)
+        if valid(m) then cands[#cands + 1] = { m = m, how = how } end
+    end
+    if nm then add(before.byName[nm], "the body's material for slot " .. nm) end
+    add(before.skin, "the body's skin material")
+    local op = mo and ((active and active[mo] and active[mo].orig) or mo)   -- as the game spells it
+    local game = op and loadObj(op, op:match("[^/]+$"))
+    if valid(game) then                         -- the original of the mod's mesh: a skeletal mesh
+        local names = Wear.slotNames(game)
+        local okM, mats = pcall(function() return arrayItems(game.Materials) end)
+        for i, sm in ipairs(okM and mats or {}) do
+            local okI, m = pcall(function() return sm.MaterialInterface end)
+            if okI and valid(m) and Wear.isSkin(m, names[i - 1]) then
+                add(m, "the skin material of the game's own " .. tostring(leafName(game, true)))
+            end
+        end
+    end
+    local best, bestN = cands[1], -1
+    for _, c in ipairs(cands) do
+        local n = Wear.likeCount(active, c.m)
+        if n > bestN then best, bestN = c, n end
+    end
+    if not best then return nil, nil end
+    return best.m, best.how
 end
 Wear.fillSlots = function(actor, comp, mesh, before, active)
     local names = Wear.slotNames(mesh)
@@ -1117,8 +1513,7 @@ Wear.fillSlots = function(actor, comp, mesh, before, active)
                     i, nm or "?", pkgPath(chosen) or "?", tag)
                 goto nextslot
             end
-            local donor, how = nm and before.byName[nm], "the body's material for slot " .. tostring(nm)
-            if not donor then donor, how = before.skin, "the body's skin material" end
+            local donor, how = Wear.pickDonor(active, mo, before, nm)
             if donor and valid(donor) then
                 local parent = isMID(donor) and donor.Parent or donor
                 local mid = makeMID(actor, comp, i, parent, nil)
@@ -1128,11 +1523,12 @@ Wear.fillSlots = function(actor, comp, mesh, before, active)
                     i, nm or "?", pkgPath(parent) or "?", how, tag)
                 if mid then
                     for key, tp in pairs(textureParams(mid)) do
-                        local t = valid(tp.tex) and namedLike(active, tp.tex)
+                        local okT, tpath, tname = TRACE.tex(tp, true)
+                        local t = okT and namedLike(active, tp.tex, tname)
                         if t then
                             setTexture(mid, tp.info, t)
                             change("mat%d texture %s: %s -> %s (the mod's own, named like it)",
-                                i, key:match("^[^|]*"), pkgPath(tp.tex) or "?", pkgPath(t) or "?")
+                                i, key:match("^[^|]*"), tpath or "?", pkgPath(t) or "?")
                         end
                     end
                 end
@@ -1198,20 +1594,27 @@ Wear.resolve = function(active, orig, class)    -- an asset named by its origina
 end
 
 local function fixSlot(actor, active, comp, i, meshDefault, oldDefault, meshChanged)
+    step("slot " .. i .. ": GetMaterial")
     local ok, mat = pcall(function() return comp:GetMaterial(i) end)
-    if not ok or not valid(mat) then return end
+    if not ok or not alive(mat) then return end
     local mid = isMID(mat) and mat or nil
     local base = mid and mat.Parent or mat
-    local target = chooseMaterial(active, base, meshDefault, oldDefault, meshChanged)
-    if target and pkgPath(target) and pkgPath(target) == pkgPath(base) then target = nil end   -- already right
+    local bpath, bname = pkgPath(base)
+    local target = chooseMaterial(active, base, bpath, bname, meshDefault, oldDefault, meshChanged)
+    local tpath, tname
+    if target then tpath, tname = pkgPath(target) end
+    if tpath and tpath == bpath then target = nil end   -- already right
     if target and valid(target) then
         -- the mesh default itself may be remapped by a selected variant (e.g. a color variant)
-        local tp = pkgPath(target)
-        if tp then
-            local p, o, mode = wanted(active, tp, leafName(target))
-            if mode == "map" then target = loadObj(p, o) or target end
+        if tpath then
+            local p, o, mode = wanted(active, tpath, tname)
+            if mode == "map" then
+                local t2 = loadObj(p, o)
+                if t2 then target, tpath = t2, pkgPath(t2) end
+            end
         end
-        change("mat%d %s -> %s", i, pkgPath(base) or "?", pkgPath(target) or "?")
+        change("mat%d %s -> %s", i, bpath or "?", tpath or "?")
+        step("slot " .. i .. ": set material")
         if mid then
             local nm = makeMID(actor, comp, i, target, mid)
             if nm then mat = nm end
@@ -1223,17 +1626,24 @@ local function fixSlot(actor, active, comp, i, meshDefault, oldDefault, meshChan
     -- textures referenced through material parameters
     local changes, stale = {}, false
     for key, tp in pairs(textureParams(mat)) do
-        local tpath = pkgPath(tp.tex)
+        local _, tpath, tname = TRACE.tex(tp, true)
         if tpath then
-            local p, o, mode = wanted(active, tpath, leafName(tp.tex))
+            local p, o, mode = wanted(active, tpath, tname)
             if mode == "map" or mode == "orig" then
                 local t = loadObj(p, o)
                 if t then
                     table.insert(changes, { tp.info, t })
                     change("mat%d texture %s: %s -> %s", i, tostring(key):match("^[^|]*"), tpath, p)
                 end
-            elseif mode == "default" then
-                stale = true                    -- a texture we set for a variant that is now off
+            elseif mode == "default" and not stale then
+                -- a texture we set for a variant that is now off, unless the parent shows the same
+                -- one: then it is the material's own (a mod-only original from the shared pak) and
+                -- going back to the parent changes nothing. PC 17 Oct: a multi-outfit mod's swapped
+                -- Blueprint's materials use such textures; every look rebuilt three of them.
+                local own = isMID(mat) and valid(mat.Parent) and textureParams(mat.Parent)[key]
+                local _, opath = nil, nil
+                if own then _, opath = TRACE.tex(own, true) end
+                if opath ~= tpath then stale = true end
             end
         end
     end
@@ -1243,6 +1653,7 @@ local function fixSlot(actor, active, comp, i, meshDefault, oldDefault, meshChan
         if fresh then mat = fresh end
     end
     if #changes > 0 then
+        step("slot " .. i .. ": dynamic material + textures")
         local m2 = isMID(mat) and mat or makeMID(actor, comp, i, mat, nil)
         if m2 then
             for _, c in ipairs(changes) do setTexture(m2, c[1], c[2]) end
@@ -1250,17 +1661,20 @@ local function fixSlot(actor, active, comp, i, meshDefault, oldDefault, meshChan
     end
 end
 
-local function meshDefaults(mesh)               -- slot -> material from the mesh asset itself
-    local out = {}
-    pcall(function()
-        for i, sm in ipairs(arrayItems(mesh.Materials)) do out[i - 1] = sm.MaterialInterface end
+local function meshDefaults(mesh)               -- slot -> material from the mesh asset itself (shared: don't change)
+    if not valid(mesh) then return {} end
+    return TRACE.once("meshDefaults", mesh, function()
+        local out = {}
+        pcall(function()
+            for i, sm in ipairs(arrayItems(mesh.Materials)) do out[i - 1] = sm.MaterialInterface end
+        end)
+        pcall(function()
+            if next(out) == nil then
+                for i, sm in ipairs(arrayItems(mesh.StaticMaterials)) do out[i - 1] = sm.MaterialInterface end
+            end
+        end)
+        return out
     end)
-    pcall(function()
-        if next(out) == nil then
-            for i, sm in ipairs(arrayItems(mesh.StaticMaterials)) do out[i - 1] = sm.MaterialInterface end
-        end
-    end)
-    return out
 end
 
 -- --------------------------------------------------------------------------- components
@@ -1268,28 +1682,73 @@ end
 local NAMED = { "Body", "Face", "Hair", "Eyebrows", "Eyelashes", "Beard", "Mustache",
                 "Haircut_SkeletalMesh", "Haircut_StaticMesh" }
 
+-- The actor's mesh components, named by their own object names (a Blueprint's components are named
+-- like its variables: Body, Face, ...), in NAMED order first. Never through the actor's properties:
+-- PC 17 Oct, two crashes at camp right after a fast travel, both inside UE4SS's property cache
+-- (FindProperty -> FFieldClassVariant::GetFName) while reading "Face" of a camp character. UE4SS
+-- 1176 caches a property per class address; camp Blueprints are unloaded and loaded again, a new
+-- class can get the old address, and the cache hands back the freed property (a guess that fits
+-- both dumps). K2_GetComponentsByClass is a call of a native function: no Blueprint property read.
+-- Only outfit actors (the game's skin and face Blueprints) are also read by property: their Body,
+-- Face, ... point at the pawn's components (the swap policy renders the outfit through the pawn),
+-- which their own component list doesn't hold.
+TRACE.outfitActor = function(a)
+    local key, c = TRACE.classKey(a)
+    if not key then return false end
+    TRACE.outfitCls = TRACE.outfitCls or {}
+    if TRACE.outfitCls[key] ~= nil then return TRACE.outfitCls[key] end
+    local r, s = false, c
+    for _ = 1, 16 do
+        if not valid(s) then break end
+        local n = leafName(s)
+        if n == "BP_CharacterSkinBase_C" or n == "BP_CharacterFaceBase_C" then r = true break end
+        local okp, sup = pcall(function() return s:GetSuperStruct() end)
+        if not okp then break end
+        s = sup
+    end
+    TRACE.outfitCls[key] = r
+    return r
+end
 local function meshComponents(actor)
     local list, seen = {}, {}
     local function add(name, c)
         if valid(c) then
             local a = c:GetAddress()
-            if not seen[a] then seen[a] = true table.insert(list, { name = name, comp = c }) end
+            if not seen[a] then seen[a] = true table.insert(list, { name = name or leafName(c, true) or "?", comp = c }) end
         end
-    end
-    for _, n in ipairs(NAMED) do
-        local ok, c = pcall(function() return actor[n] end)
-        if ok then add(n, c) end
     end
     local meshCls = cls("/Script/Engine.MeshComponent")
     if valid(meshCls) then
+        step("components: K2_GetComponentsByClass")
         local ok, arr = pcall(function() return actor:K2_GetComponentsByClass(meshCls) end)
-        if ok then for _, c in ipairs(arrayItems(arr)) do add(leafName(c) or "?", c) end end
+        for _, c in ipairs(ok and arrayItems(arr) or {}) do add(nil, c) end
     end
+    if valid(actor) and TRACE.outfitActor(actor) then
+        -- a name the class lists with another type (or not at all) is skipped without a read
+        local key = TRACE.classKey(actor)
+        for _, n in ipairs(NAMED) do
+            local types = PROP_TYPES[key]
+            if not (type(types) == "table" and types[n] ~= "ObjectProperty") then
+                step("components: property " .. n)
+                local c = propOf(actor, n, "ObjectProperty")
+                if c ~= nil then add(n, c) end
+            end
+        end
+    end
+    local rank = {}
+    for i, n in ipairs(NAMED) do rank[n] = i end
+    for i, e in ipairs(list) do e.i = i end
+    table.sort(list, function(x, y)
+        local rx, ry = rank[x.name] or 99, rank[y.name] or 99
+        if rx ~= ry then return rx < ry end
+        return x.i < y.i
+    end)
     return list
 end
 
-local function getMesh(comp)
-    if isA(comp, "/Script/Engine.SkeletalMeshComponent") then
+local function getMesh(comp, skel)              -- skel: comp is known to be a valid SkeletalMeshComponent
+    step("mesh of a component")
+    if skel or isA(comp, "/Script/Engine.SkeletalMeshComponent") then
         local ok, m = pcall(function() return comp:GetSkeletalMeshAsset() end)
         if ok and valid(m) then return m, "skel" end
         ok, m = pcall(function() return comp.SkinnedAsset end)
@@ -1311,6 +1770,8 @@ end
 -- Same skeleton: keep the running animation pose (SetSkinnedAssetAndUpdate(mesh, false)) instead
 -- of re-initialising the anim instance, physics and cloth from scratch on every swap.
 local function setMesh(comp, kind, mesh, oldMesh)
+    step("set mesh " .. tostring(leafName(mesh)))
+    TRACE.st.sets = TRACE.st.sets + 1
     if kind == "skel" then
         local sameSkeleton = oldMesh ~= nil and skeletonOf(oldMesh) ~= nil and skeletonOf(oldMesh) == skeletonOf(mesh)
         if sameSkeleton and pcall(function() comp:SetSkinnedAssetAndUpdate(mesh, false) end) then return end
@@ -1325,18 +1786,59 @@ end
 -- Component templates of a (relocated) Blueprint class. Reading UClass properties from Lua
 -- doesn't work in UE4SS (it looks names up in the instance layout), but cooked templates are
 -- named subobjects "<Class path>:<Var>_GEN_VARIABLE".
+-- Components the game creates at run time ("GroomComponent_2147317866") have no template, and
+-- every lookup that finds nothing costs 13-27 ms (see loadObj): they are skipped, and what a class
+-- has (or hasn't) is kept for the map (TRACE.tmpl, cleared on map load).
+TRACE.tmpl = {}
+-- Once per session, 9 s after the first map that isn't the title screen: what a lookup costs in
+-- game, to check the reason for fix14 (StaticFindObject finding nothing: 13-27 ms each, GetAsset
+-- of an asset in memory: ~0 ms). If both come out near 0 ms, that reason was wrong.
+TRACE.speedTest = function()
+    if TRACE.speedDone then return end
+    TRACE.speedDone = true
+    local function each(f)
+        local t0 = os.clock()
+        for _ = 1, 5 do pcall(f) end
+        return (os.clock() - t0) * 1000 / 5
+    end
+    local miss = each(function() return StaticFindObject("/Game/E33WardrobeSpeedTest/Missing.Missing") end)
+    local hit = each(function() return StaticFindObject("/Script/AssetRegistry.Default__AssetRegistryHelpers") end)
+    local get = -1
+    local arh = StaticFindObject("/Script/AssetRegistry.Default__AssetRegistryHelpers")
+    if valid(arh) then
+        get = each(function()
+            return arh:GetAsset({ PackageName = fname("/Engine/EngineMaterials/WorldGridMaterial"),
+                                  AssetName = fname("WorldGridMaterial") })
+        end)
+    end
+    live("speed test: StaticFindObject, not found: %.1f ms; found: %.1f ms; GetAsset of an asset in memory: %.1f ms "
+        .. "(each, mean of 5)", miss, hit, get)
+end
+
 local function classTemplates(bpClass, names)
     local out = {}
     local cpath = fullPath(bpClass)
     if not cpath then return out end
+    local addr = bpClass:GetAddress()
     for _, n in ipairs(names) do
-        local t = StaticFindObject(cpath .. ":" .. n .. "_GEN_VARIABLE")
-        if valid(t) then out[n] = t end
+        if not n:find("_%d%d%d%d%d%d+$") then
+            local key = cpath .. ":" .. n
+            local c = TRACE.tmpl[key]
+            -- a hit is checked by name too: an unloaded class's template address can be reused
+            if not (c and c.addr == addr and (c.t == false or (valid(c.t) and fullPath(c.t) == c.name))) then
+                step("StaticFindObject " .. key .. "_GEN_VARIABLE")
+                local t = StaticFindObject(key .. "_GEN_VARIABLE")
+                c = { addr = addr, t = valid(t) and t or false, name = valid(t) and fullPath(t) or nil }
+                TRACE.tmpl[key] = c
+            end
+            if c.t then out[n] = c.t end
+        end
     end
     return out
 end
 
 local function remapAnimClass(active, comp)
+    step("anim class")
     local ok, ac = pcall(function() return comp.AnimClass end)
     if not ok or not valid(ac) then return end
     local p = pkgPath(ac)
@@ -1387,7 +1889,16 @@ local WORN = {}               -- character -> { path = original path of the body
 local Clean = {}                -- filled in below (blood / dirt); applyToActor re-cleans after swaps
 
 local function applyToActor(actor, doneComps)
-    if not valid(actor) then return end
+    step("actor: alive and name")
+    if not alive(actor) then return end
+    local aname = leafName(actor, true)
+    if aname == "None" then return end                                  -- destroyed: its memory may be reused
+    if not SETTINGS.scene_copies then
+        for _, o in ipairs({ actor, ownerOf(actor) }) do
+            local copy = valid(o) and SCENE_COPY[o:GetAddress()]
+            if copy and copy == fullPath(o) then return end
+        end
+    end
     local comps = meshComponents(actor)
     if doneComps then
         local left = {}
@@ -1403,14 +1914,15 @@ local function applyToActor(actor, doneComps)
     local char = characterOf(actor) or charFromComps(comps)
     local active = activeFor(char)
     local force = forcedFor(char)
-    local actorCtx = (leafName(actor) or "?") .. " [" .. tostring(char or "no character") .. "]"
+    local actorCtx = (aname or "?") .. " [" .. tostring(char or "no character") .. "]"
     local skinActor = isSkinActor(actor)
     -- 1) whole skin Blueprint overridden by a variant: copy its component setup
     local templates
+    step("class of the actor")
     local clsObj = actor:GetClass()
-    local cpath = pkgPath(clsObj)
+    local cpath, cname = pkgPath(clsObj)
     if cpath then
-        local p, o, mode = wanted(active, cpath, leafName(clsObj))
+        local p, o, mode = wanted(active, cpath, cname)
         if mode == "map" then
             local bp = loadObj(p, o)
             if bp then
@@ -1433,17 +1945,37 @@ local function applyToActor(actor, doneComps)
     for _, e in ipairs(comps) do
         local comp = e.comp
         liveCtx = actorCtx .. "." .. e.name
+        step("component " .. e.name)
+        if not alive(comp) then goto nextComp end
         local mesh, kind = getMesh(comp)
+        if mesh and not alive(mesh, true) then goto nextComp end     -- still loading: the next look gets it
+        -- the shown mesh's path and name, read once (mp follows mesh when it is swapped below)
+        local mp, mname
+        if mesh then mp, mname = pkgPath(mesh, true) end
+        -- an actor whose character can't be told (the walking character's run-time named body
+        -- component): a component showing one of the mod's relocated meshes belongs to the
+        -- character that mesh is made for, for everything on it (mesh, materials, textures). PC:
+        -- with no character the Lune pick didn't count there, so the mesh went back to the game's
+        -- own while Lune's skin put the worn one on again 2 s later, every pass. Only relocated
+        -- meshes: the game's own can be shared (Lune's Chic mesh is Sciel's too).
+        local cchar = char
+        if not cchar and kind == "skel" and mp and TO_ORIGINAL[mp:lower()] then
+            cchar = onlyChar(TO_ORIGINAL[mp:lower()])
+        end
+        local cActive = (cchar ~= char) and activeFor(cchar) or active
+        local ca                                -- the component's address, once needed
         local newMesh, why
         local tmpl = templates and templates[e.name]
         if tmpl then
             local tm = getMesh(tmpl)
-            if valid(tm) and pkgPath(tm) ~= pkgPath(mesh) then newMesh, why = tm, "the variant's skin Blueprint" end
+            if valid(tm) and pkgPath(tm) ~= mp then newMesh, why = tm, "the variant's skin Blueprint" end
         end
         local wearReset, wearRestore
         if not newMesh and WEAR_COMPS[e.name] and kind == "skel" and mesh then
-            local ca, mp = comp:GetAddress(), pkgPath(mesh)
+            ca = comp:GetAddress()
             local prev = FORCED_FROM[ca]
+            local cname = fullPath(comp)
+            if prev and prev.comp ~= cname then prev = nil FORCED_FROM[ca] = nil end   -- address reused
             -- is the component still showing the worn mesh we put there? (else the game re-dressed it)
             local ours = prev ~= nil and mp ~= nil and prev.set ~= nil and mp:lower() == prev.set:lower()
             local nm = 0
@@ -1455,22 +1987,38 @@ local function applyToActor(actor, doneComps)
                 local fo = TO_ORIGINAL[force.pkg:lower()]
                 if fo then markApplied(fo:lower(), force.vid) end
                 if mp and mp:lower() ~= force.pkg:lower() then
+                    -- the game put its own mesh back within seconds of ours: counted. Copies it keeps
+                    -- for scenes get theirs back every time, and re-dressing them again only costs
+                    -- frames (PC: 5-8 times per copy, stutter). After 3 in a row they're left alone
+                    -- for 30 s; an outfit change later starts the count again.
+                    local now = os.time()
+                    local recent = prev ~= nil and prev.at ~= nil and now - prev.at <= 10
+                    local resets = (prev and prev.set and not ours and recent) and (prev.resets or 0) + 1 or 0
                     if ours then
                         -- another worn mesh (e.g. Body Clean -> PH): keep the outfit remembered before
                         why = "Wear: another worn mesh"
+                    elseif resets >= 3 or (prev and prev.gaveUp and now - (prev.at or 0) <= 30) then
+                        if not prev.gaveUp then
+                            prev.gaveUp = true
+                            live("    %s: the game keeps putting its own mesh back; left alone", actorCtx)
+                        end
                     else
                         -- remember what the game put there, materials included (hidden slots etc.)
+                        step("Wear: materials the game put there")
                         local mats = {}
                         for i = 0, nm - 1 do
                             local okm, m = pcall(function() return comp:GetMaterial(i) end)
                             if okm and valid(m) then mats[i] = m end
                         end
-                        FORCED_FROM[ca] = { path = mp, obj = leafName(mesh), mats = mats, names = Wear.slotNames(mesh) }
+                        FORCED_FROM[ca] = { path = mp, obj = mname, mats = mats, names = Wear.slotNames(mesh),
+                                            comp = cname, resets = resets }
                         why = "Wear: over the outfit worn now"
                     end
-                    FORCED_FROM[ca].set = force.pkg
-                    newMesh = loadObj(force.pkg, force.obj)
-                    wearReset = nm
+                    if FORCED_FROM[ca] and not FORCED_FROM[ca].gaveUp then
+                        FORCED_FROM[ca].set, FORCED_FROM[ca].at = force.pkg, now
+                        newMesh = loadObj(force.pkg, force.obj)
+                        wearReset = nm
+                    end
                 elseif prev then
                     prev.set = force.pkg
                 end
@@ -1488,20 +2036,19 @@ local function applyToActor(actor, doneComps)
            and skinActor then
             -- A skin actor's body shows its own outfit or a variant of it. A worn mesh left on it
             -- (Wear switched off while the bookkeeping was lost) goes back to the outfit first.
-            local mp = pkgPath(mesh)
             local orig = mp and TO_ORIGINAL[mp:lower()]
             local vm = orig and vanillaMesh(e.name)
-            local vp = valid(vm) and pkgPath(vm)
+            local vp, vname
+            if valid(vm) then vp, vname = pkgPath(vm, true) end
             if vp and orig:lower() ~= vp:lower() then
-                local p2, o2, m2 = wanted(active, vp, leafName(vm))
+                local p2, o2, m2 = wanted(active, vp, vname)
                 newMesh = (m2 == "map" and loadObj(p2, o2)) or vm
                 why = "back to this outfit's own mesh (a worn mesh was left on it)"
             end
         end
         if not newMesh and mesh then
-            local mp = pkgPath(mesh)
             local p, o, mode
-            if mp then p, o, mode = wanted(active, mp, leafName(mesh)) end
+            if mp then p, o, mode = wanted(cActive, mp, mname) end
             if mode == "map" or mode == "orig" then
                 newMesh = loadObj(p, o)
                 why = mode == "map" and "selected variant" or "variant off: the game's own"
@@ -1516,14 +2063,16 @@ local function applyToActor(actor, doneComps)
             pcall(Wear.noteTextures, comp, char)        -- what the body shows before its mesh changes
         end
         local before = newMesh and kind == "skel" and WEAR_COMPS[e.name]
-            and select(2, pcall(Wear.before, comp, mesh, FORCED_FROM[comp:GetAddress()])) or nil
+            and select(2, pcall(Wear.before, comp, mesh, FORCED_FROM[ca or comp:GetAddress()])) or nil
         if newMesh and kind then
-            change("mesh %s -> %s (%s)", mesh and pkgPath(mesh) or "none", pkgPath(newMesh) or "?", why or "?")
+            local np = pkgPath(newMesh)
+            change("mesh %s -> %s (%s)", mesh and mp or "none", np or "?", why or "?")
             oldDefaults = mesh and meshDefaults(mesh) or {}
             local t0 = os.clock()
-            setMesh(comp, kind, newMesh, mesh) mesh = newMesh meshChanged = true
+            setMesh(comp, kind, newMesh, mesh) mesh = newMesh mp = np meshChanged = true
             if liveF then live("    mesh set (%d ms)", math.floor((os.clock() - t0) * 1000 + 0.5)) end
             if wearReset then
+                step("Wear: clear the old outfit's materials")
                 -- the old outfit's material setup doesn't belong on another outfit's mesh
                 local okn, nm = pcall(function() return comp:GetNumMaterials() end)
                 for i = 0, math.max(wearReset, okn and nm or 0) - 1 do
@@ -1546,10 +2095,10 @@ local function applyToActor(actor, doneComps)
                 end
             end)
         end
-        local compActive = active
-        if WEAR_COMPS[e.name] and kind == "skel" then compActive = forOutfit(active, mesh and pkgPath(mesh)) end
+        local compActive = cActive
+        if WEAR_COMPS[e.name] and kind == "skel" then compActive = forOutfit(cActive, mesh and mp) end
         if kind == "skel" then remapAnimClass(compActive, comp) end
-        if meshChanged and type(before) == "table" then pcall(Wear.fillSlots, actor, comp, mesh, before, compActive) end
+        if meshChanged and type(before) == "table" then step("Wear: fill material slots") pcall(Wear.fillSlots, actor, comp, mesh, before, compActive) end
         local ok, n = pcall(function() return comp:GetNumMaterials() end)
         if ok and n then
             for i = 0, n - 1 do
@@ -1557,17 +2106,20 @@ local function applyToActor(actor, doneComps)
                 if not okf then log("slot %d of %s: %s", i, e.name, tostring(err)) end
             end
         end
-        if ok and n and char and kind == "skel" and WEAR_COMPS[e.name] then pcall(Wear.fillEmpty, actor, comp, char, n, compActive) end
-        if SETTINGS.clean and Clean.comp then pcall(Clean.comp, comp, actor) end
+        if ok and n and char and kind == "skel" and WEAR_COMPS[e.name] then
+            step("Wear: fill empty textures")
+            pcall(Wear.fillEmpty, actor, comp, char, n, compActive)
+        end
+        if SETTINGS.clean and Clean.comp then step("Clean") pcall(Clean.comp, comp, actor) end
         -- what this character wears now (for the menu): the body mesh after this pass
         if char and kind == "skel" and WEAR_COMPS[e.name] and mesh then
-            local mp = pkgPath(mesh)
             local prev = WORN[char]
             if mp and (not prev or not prev.skin or skinActor) then
-                local f = FORCED_FROM[comp:GetAddress()]
+                local f = FORCED_FROM[ca or comp:GetAddress()]
                 WORN[char] = { path = TO_ORIGINAL[mp:lower()] or mp, under = f and f.path or nil, skin = skinActor }
             end
         end
+        ::nextComp::
     end
 end
 
@@ -1575,9 +2127,10 @@ local SKIN_CLASSES = { "BP_CharacterSkinBase_C", "BP_CharacterFaceBase_C", "BP_C
 local SKIN_OF_CLASS = {}      -- class address|name -> bool
 
 isSkinActor = function(a)
-    local okc, c = pcall(function() return a:GetClass() end)
-    if not okc or not valid(c) then return false end
-    local addr = c:GetAddress() .. "|" .. tostring(leafName(c))   -- an unloaded class's address can be reused
+    step("skin class check")
+    if not valid(a) then return false end
+    local addr, c = TRACE.classKey(a)          -- an unloaded class's address can be reused: with its name
+    if not addr then return false end
     if SKIN_OF_CLASS[addr] ~= nil then return SKIN_OF_CLASS[addr] end
     local result, s = false, c
     for _ = 1, 16 do
@@ -1595,10 +2148,33 @@ end
 
 local EXTRA_CLASS = {}         -- class address|name -> true: non-skin actors seen showing a replaced mesh
 
+-- Party characters that aren't skin actors are otherwise only known once a pass has seen one
+-- showing a replaced mesh, and passes don't run when a battle starts (PC, 15 Oct: with an outfit mod worn
+-- over Chic, no battle character was ever looked at). These are known by their class names.
+TRACE.PAWN_NAMES = { "^BP_%u%l+_Battle%d*_C$", "^BP_Pawn_AICompanion_%u%l+_C$" }
 local function isWardrobeActor(a)
     if isSkinActor(a) then return true end
-    local ok, c = pcall(function() return a:GetClass() end)
-    return ok and valid(c) and EXTRA_CLASS[c:GetAddress() .. "|" .. tostring(leafName(c))] == true
+    if not valid(a) then return false end
+    local key, c = TRACE.classKey(a)
+    if not key then return false end
+    if EXTRA_CLASS[key] == true then return true end
+    -- PC, 17 Oct: ~6000 BeginPlays a minute in battle, nearly all of other classes; the name check
+    -- is done once per class (a pass can still add the class to EXTRA_CLASS later)
+    TRACE.notPawn = TRACE.notPawn or {}
+    if TRACE.notPawn[key] then return false end
+    local n = valid(c) and leafName(c) or nil
+    if n then
+        for _, pat in ipairs(TRACE.PAWN_NAMES) do
+            if n:find(pat) then
+                EXTRA_CLASS[key] = true
+                EXTRA_CLASS._names = EXTRA_CLASS._names or {}
+                EXTRA_CLASS._names[n] = true
+                return true
+            end
+        end
+        TRACE.notPawn[key] = true
+    end
+    return false
 end
 
 -- Actors (not only skin actors) that show a mesh some variant replaces, e.g. the base body
@@ -1616,8 +2192,8 @@ local function forEachMappedMeshOwner(fn)
     local seen = {}
     for _, c in ipairs(all) do
         if valid(c) then
-            local m = getMesh(c)
-            local p = valid(m) and pkgPath(m)
+            local m = getMesh(c, true)                 -- FindAllOf gave skeletal mesh components
+            local p = m and pkgPath(m, true)
             if p and (MAPPED_MESH[p:lower()] or (heroes and p:lower():find("/characters/heros/", 1, true))) then
                 local oko, owner = pcall(function() return c:GetOwner() end)
                 if oko and valid(owner) and not seen[owner:GetAddress()] then
@@ -1657,8 +2233,8 @@ do
     local ZERO, ZERO_NAME = nil, nil   -- the all-zero texture and its name
     local LAST_CLEAN = nil
 
-    local function isMask(tex)
-        local p = valid(tex) and pkgPath(tex)
+    local function isMask(tp)                   -- a texture parameter showing a BTLS mask
+        local _, p = TRACE.tex(tp, true)
         if not p or not p:find("/BTLS_Textures/", 1, true) then return false end
         return not (p:match("[^/]+$") or ""):lower():find("normal", 1, true)
     end
@@ -1691,8 +2267,8 @@ do
     local function cleanCine(actor, stats)
         local any = false
         for _, prop in ipairs(CINE_LEVELS) do
-            local ok, v = pcall(function() return actor[prop] end)
-            if ok and type(v) == "number" then
+            local v = propOf(actor, prop, "FloatProperty", "DoubleProperty")
+            if type(v) == "number" then
                 any = true
                 if v > 0 and pcall(function() actor[prop] = 0.0 end) then stats.cine = stats.cine + 1 end
             end
@@ -1707,7 +2283,7 @@ do
             if okm and valid(m) then
                 local mid = isMID(m)
                 for key, tp in pairs(textureParams(m)) do
-                    if isMask(tp.tex) then
+                    if isMask(tp) then
                         stats.names[key:match("^[^|]+")] = true
                         if not mid and ctx then                  -- a plain material: give the slot an instance
                             local nm = makeMID(ctx, comp, i, m, nil)
@@ -1799,15 +2375,12 @@ do
     Clean.all, Clean.keep, Clean.actor, Clean.newStats, Clean.restore = cleanAll, keepClean, cleanActor, newStats, restoreAll
     Clean.comp = function(comp, ctx) cleanComp(comp, newStats(), ctx) end   -- after our own swaps (new MIDs)
     Clean.last = function() return LAST_CLEAN end
-    Clean.owner = function(owner)               -- the skin / face actors a character's skin component spawned
-        if not valid(owner) then return end
-        for _, cn in ipairs({ "BP_CharacterSkinComponent", "BP_CinematicCharacterSkinComponent" }) do
-            local ok, sc = pcall(function() return owner[cn] end)
-            if ok and valid(sc) then
-                for _, prop in ipairs({ "SpawnedCharacterSkin", "SpawnedCharacterFace" }) do
-                    local ok2, skin = pcall(function() return sc[prop] end)
-                    if ok2 and valid(skin) then cleanActor(skin, newStats()) end
-                end
+    Clean.owner = function(owner)               -- the skin / face actors of this owner seen so far
+        local on = fullPath(owner)
+        if not on then return end
+        for _, k in pairs(KNOWN_SKINS) do         -- not through owner properties (see KNOWN_SKINS)
+            if k.owner == on and alive(k.a) and fullPath(k.a) == k.name:match("^%S+%s+(.+)$") then
+                cleanActor(k.a, newStats())
             end
         end
     end
@@ -1829,17 +2402,35 @@ local function runApply()
         WORN = {}
         passChanges = 0
         local n, extra, done, doneComps = 0, 0, {}, {}
+        local passT0 = os.clock()
         local function one(a)
             done[a:GetAddress()] = true
-            local ok, err = pcall(applyToActor, a, doneComps)
+            if not alive(a) then return end
+            local ok, err = TRACE.timed(leafName(a) or "?", applyToActor, a, doneComps)
             if not ok then log("apply failed on %s: %s", tostring(leafName(a)), tostring(err)) end
             n = n + 1
         end
-        forEachSkin(one)
+        step("pass: find skin actors (FindAllOf)")
+        forEachSkin(function(a)
+            one(a)
+            -- skins made while a map loads are left to this pass, so they are noted here too: a
+            -- skin the game shows again later without a BeginPlay is found through its owner
+            local addr = alive(a) and a:GetAddress()
+            if addr and not KNOWN_SKINS[addr] then
+                local okN, nm = pcall(function() return a:GetFullName() end)
+                local own = ownerOf(a)
+                if okN and nm then KNOWN_SKINS[addr] = { a = a, name = nm, owner = valid(own) and fullPath(own) or nil } end
+            end
+        end)
+        step("pass: find other actors showing a replaced mesh (FindAllOf)")
         forEachMappedMeshOwner(function(a)
             if done[a:GetAddress()] then return end
             local okc, c = pcall(function() return a:GetClass() end)
-            if okc and valid(c) then EXTRA_CLASS[c:GetAddress() .. "|" .. tostring(leafName(c))] = true end
+            if okc and valid(c) then
+                EXTRA_CLASS[c:GetAddress() .. "|" .. tostring(leafName(c))] = true
+                EXTRA_CLASS._names = EXTRA_CLASS._names or {}
+                if leafName(c) then EXTRA_CLASS._names[leafName(c)] = true end
+            end
             extra = extra + 1
             one(a)
         end)
@@ -1850,8 +2441,10 @@ local function runApply()
         else
             log("applied to %d skin actor(s)", n)
         end
-        live("pass (%s): %d change(s)%s", reasons, passChanges,
-            passChanges == 0 and " - nothing loaded needed changing" or "")
+        local passMs = (os.clock() - passT0) * 1000
+        TRACE.st.passes, TRACE.st.passMs = TRACE.st.passes + 1, TRACE.st.passMs + passMs
+        live("pass (%s): %d change(s)%s; %d actor(s) in %d ms", reasons, passChanges,
+            passChanges == 0 and " - nothing loaded needed changing" or "", n, math.floor(passMs + 0.5))
         if afterPass then afterPass() end
 end
 
@@ -1874,6 +2467,13 @@ end
 
 local function applyIfDue()                     -- the game-thread loop
     if PASS.due and loopTicks >= PASS.due then
+        if TRACE.busy() and loopTicks - (PASS.waitFrom or loopTicks) < 200 then
+            PASS.waitFrom = PASS.waitFrom or loopTicks
+            PASS.due = loopTicks + 5                -- a burst of new actors: wait for calm
+            TRACE.st.waits = (TRACE.st.waits or 0) + 1
+            return
+        end
+        PASS.waitFrom = nil
         PASS.due = nil
         runApply()
     end
@@ -1903,7 +2503,8 @@ local function dump(quiet)
                 if not seenA[a:GetAddress()] then seenA[a:GetAddress()] = true visit[#visit + 1] = a end
             end)
             local function dumpActor(a)
-                f:write("ACTOR ", a:GetFullName(), "\n  class: ", a:GetClass():GetFullName(), "\n")
+                local ac = a:GetClass()
+                f:write("ACTOR ", a:GetFullName(), "\n  class: ", valid(ac) and ac:GetFullName() or "nil", "\n")
                 local owner = ownerOf(a)
                 f:write("  owner: ", valid(owner) and owner:GetFullName() or "nil", "\n")
                 local comps = meshComponents(a)
@@ -1912,17 +2513,20 @@ local function dump(quiet)
                 if not isSkinActor(a) then f:write("  (not a skin actor: visited because it shows a replaced mesh)\n") end
                 for _, o in ipairs({ owner, a }) do
                     if valid(o) then
-                        local ok, sc = pcall(function() return o.BP_CharacterSkinComponent end)
-                        if ok and valid(sc) then
-                            local okp, pol = pcall(function() return sc.SkinAssignPolicy end)
+                        local sc = propOf(o, "BP_CharacterSkinComponent", "ObjectProperty")
+                        if valid(sc) then
+                            local pol = propOf(sc, "SkinAssignPolicy", "ObjectProperty")
+                            local pc = valid(pol) and pol:GetClass()
                             f:write("  skin component: ", sc:GetFullName(), "\n  policy: ",
-                                (okp and valid(pol)) and pol:GetClass():GetFullName() or "nil", "\n")
-                            local okm, arr = pcall(function() return sc.CurrentCharacterSkinMaterialInstances end)
-                            f:write("  CurrentCharacterSkinMaterialInstances: ", okm and #arrayItems(arr) or "?", "\n")
+                                valid(pc) and pc:GetFullName() or "nil", "\n")
+                            local arr = propOf(sc, "CurrentCharacterSkinMaterialInstances", "ArrayProperty")
+                            f:write("  CurrentCharacterSkinMaterialInstances: ", arr ~= nil and #arrayItems(arr) or "?", "\n")
                             if not listedFns then
                                 listedFns = true
                                 pcall(function()
-                                    sc:GetClass():ForEachFunction(function(fn)
+                                    local scc = sc:GetClass()
+                                    if not valid(scc) then return end
+                                    scc:ForEachFunction(function(fn)
                                         f:write("    fn ", fn:GetFName():ToString(), "\n")
                                     end)
                                 end)
@@ -1932,15 +2536,29 @@ local function dump(quiet)
                 end
                 local short = leafName(a) or "?"
                 for _, e in ipairs(comps) do
-                    local mesh = getMesh(e.comp)
+                    local mesh, mkind = getMesh(e.comp)
                     note(mesh, short .. "." .. e.name)
                     f:write("  [", e.name, "] mesh=", valid(mesh) and mesh:GetFullName() or "nil", "\n")
                     if valid(mesh) then
-                        pcall(function() f:write("     skeleton=", mesh.Skeleton:GetFullName(), "\n") end)
-                        pcall(function() f:write("     physics=", mesh.PhysicsAsset:GetFullName(), "\n") end)
+                        pcall(function() f:write("     skeleton=", fullPath(mesh.Skeleton) or "nil", "\n") end)
+                        pcall(function() f:write("     physics=", fullPath(mesh.PhysicsAsset) or "nil", "\n") end)
                     end
-                    pcall(function() f:write("     anim=", e.comp.AnimClass:GetFullName(), "\n") end)
-                    pcall(function() f:write("     leader=", e.comp.LeaderPoseComponent:GetFullName(), "\n") end)
+                    pcall(function() f:write("     anim=", fullPath(e.comp.AnimClass) or "nil", "\n") end)
+                    -- a weak pointer in UE 5.4 (UE4SS #1433): read only through propOf's type check
+                    pcall(function() f:write("     leader=", fullPath(propOf(e.comp, "LeaderPoseComponent", "ObjectProperty")) or "nil", "\n") end)
+                    if mkind == "skel" then
+                        -- what animates it now: anim= is only the class it is set up with. PC 17 Oct:
+                        -- the cutscene Sciel from the swapped Blueprint had none; every other
+                        -- cutscene character had ABP_CinematicCharacter.
+                        pcall(function()
+                            local inst = propOf(e.comp, "AnimScriptInstance", "ObjectProperty")
+                            local ic = valid(inst) and inst:GetClass() or nil
+                            local mode = propOf(e.comp, "AnimationMode", "ByteProperty", "EnumProperty")
+                            local modes = { [0] = "AnimationBlueprint", "AnimationSingleNode", "AnimationCustomMode" }
+                            f:write("     instance=", valid(ic) and (fullPath(ic) or "?") or "nil",
+                                "  mode=", tostring(modes[mode] or mode), "\n")
+                        end)
+                    end
                     local ok, n = pcall(function() return e.comp:GetNumMaterials() end)
                     for i = 0, (ok and n or 0) - 1 do
                         local m = e.comp:GetMaterial(i)
@@ -2500,14 +3118,15 @@ local Fix = {}
 do
     local LAST_FIX = { n = 0, tried = 0 }
     local GAME_NAME = {}        -- owner address -> the game's character name ("Lune", "Default", ...)
+    Fix.forget = function() GAME_NAME = {} end
     Fix.noteName = function(owner, name)
         if valid(owner) and name and name ~= "" and name ~= "None" then GAME_NAME[owner:GetAddress()] = name end
     end
     local function nameFor(c)
         local okO, owner = pcall(function() return c:GetOwner() end)
         if okO and valid(owner) and GAME_NAME[owner:GetAddress()] then return GAME_NAME[owner:GetAddress()] end
-        local okH, n = pcall(function() return c.CharacterHardcodedName:ToString() end)
-        if okH and n and n ~= "" and n ~= "None" then return n end
+        local n = propString(c, "CharacterHardcodedName")
+        if n and n ~= "" and n ~= "None" then return n end
         return nil
     end
     local fixProbed = false
@@ -2583,11 +3202,17 @@ do
 
     Fix.look = function()
         inGame(function()
-            local n, tried, noName, used = 0, 0, 0, {}
-            for _, cn in ipairs({ "BP_CharacterSkinComponent_C", "BP_CinematicCharacterSkinComponent_C" }) do
+            local n, tried, noName, used, inScene = 0, 0, 0, {}, 0
+            -- Cutscene pawns are left alone: re-dressing one mid-scene can leave the scene waiting
+            -- (PC: dialogue no longer appeared after Fix look). The game dresses them per shot.
+            local okC, cine = pcall(FindAllOf, "BP_CinematicCharacterSkinComponent_C")
+            if okC and cine then inScene = #cine end
+            for _, cn in ipairs({ "BP_CharacterSkinComponent_C" }) do
                 local ok, comps = pcall(FindAllOf, cn)
                 for _, c in ipairs(ok and comps or {}) do
-                    if valid(c) then
+                    local okK, k = false, nil
+                    if valid(c) then okK, k = pcall(function() return leafName(c:GetClass()) end) end
+                    if valid(c) and not (okK and k == "BP_CinematicCharacterSkinComponent_C") then
                         tried = tried + 1
                         local args = learnFixArgs(c)
                         if args == "name" then
@@ -2596,10 +3221,12 @@ do
                                 noName = noName + 1
                             else
                                 local okc, err = pcall(function() c:ApplyCurrentCharacterSkin(FName(name)) end)
+                                TRACE.fresh()       -- the game's code ran: nothing read before is kept
                                 if okc then n = n + 1 used[name] = true else probeSkinComponent(c, err) end
                             end
                         elseif args then
                             local okc, err = pcall(function() c:ApplyCurrentCharacterSkin(table.unpack(args)) end)
+                            TRACE.fresh()
                             if okc then n = n + 1 else probeSkinComponent(c, err) end
                         end
                     end
@@ -2612,9 +3239,10 @@ do
             local names = {}
             for k in pairs(used) do names[#names + 1] = k end
             table.sort(names)
-            log("Fix look: the game re-dressed %d of %d character(s)%s%s", n, tried,
+            log("Fix look: the game re-dressed %d of %d character(s)%s%s%s", n, tried,
                 #names > 0 and (" (" .. table.concat(names, ", ") .. ")") or "",
-                noName > 0 and string.format("; %d without a known character name", noName) or "")
+                noName > 0 and string.format("; %d without a known character name", noName) or "",
+                inScene > 0 and string.format("; %d cutscene character(s) left alone", inScene) or "")
             delayGT(800, function() applyAll("after Fix look") end)
         end)
     end
@@ -2769,49 +3397,263 @@ local function onConsole(_, params)
     return true
 end
 
--- New skin actors (outfit change, battle, cutscene, menu preview) are swapped on the next loop
--- tick (not inside BeginPlay, where the game may be loading or streaming), then checked again
--- ~0.7 s later for anything the game set up afterwards. Actors are kept by reference and
--- re-validated; no full object scans on this path.
-local spawned, recheck, recheckQueued = {}, {}, false
+-- commands.txt next to the mod: read about once a second, every line run on the game thread, then
+-- the file is removed (for a script or a developer driving the mod while the game runs; each line
+-- is logged as "command: ..."). A line is what the console's "wardrobe" command takes ("dump",
+-- "report", "fix", "apply", "reload", "<slot> <variant>|off", "clean on|off"), or:
+--   pick <slot id> | <variant id or off>     wear <slot id> | on|off     set <setting> <value>
+-- (slot and variant ids hold spaces: " | " separates the arguments of pick and wear)
+TRACE.commands = function()
+    local f = io.open(FILES.COMMANDS, "r")
+    if not f then return end
+    local text = f:read("a") or ""
+    f:close()
+    local removed = os.remove(FILES.COMMANDS)
+    if not removed then                         -- held open elsewhere (Windows): run it once only
+        if text == TRACE.cmdLast then return end
+    end
+    TRACE.cmdLast = text
+    for line in text:gmatch("[^\r\n]+") do
+        local words = {}
+        for w in line:gmatch("%S+") do words[#words + 1] = w end
+        local a, b, c = words[1], words[2], table.concat(words, " ", 3)
+        if a == "pick" or a == "wear" then
+            local rest = line:match("^%s*%S+%s+(.-)%s*$") or ""
+            b, c = rest:match("^(.-)%s*|%s*(.-)$")
+        end
+        if a and #line <= 300 and not a:find("^#") then
+            live("command: %s", line)
+            if a == "pick" and b then
+                local done = false
+                for si, slot in ipairs(SLOTS) do
+                    if slot.id == b then
+                        local vi = 0
+                        for i, v in ipairs(slot.variants) do if v.id == c then vi = i end end
+                        if c ~= "off" and vi == 0 then log("command: no variant %s in %s", c, b) else setVariant(si, vi) end
+                        done = true
+                    end
+                end
+                if not done then log("command: no slot %s", b) end
+            elseif a == "wear" and b then
+                AUTOWEAR_PENDING[b] = nil
+                setWearFlag(b, c == "on")
+                rebuildActive()
+                applyAll("command")
+            elseif a == "set" and b and SETTINGS[b] ~= nil then
+                local cur = SETTINGS[b]
+                if type(cur) == "boolean" then SETTINGS[b] = (c == "true" or c == "on")
+                elseif type(cur) == "number" then SETTINGS[b] = tonumber(c) or cur
+                else SETTINGS[b] = c end
+                saveSettings()
+            elseif a == "set" then
+                log("command: no setting %s", tostring(b))
+            else
+                onConsole(nil, { a, b })
+            end
+        end
+    end
+end
 
-local function recheckPending()
-    local todo = recheck
-    recheck = {}
-    recheckQueued = false
+-- New skin actors (outfit change, battle, cutscene, menu preview) are looked at about 1 s after
+-- they appear, and again 2 s later for anything the game set up afterwards (battle skins are
+-- assigned asynchronously). Never on the tick they appear: both freezes on PC happened in the
+-- mod's first look at a skin the game had just spawned, during heavy loading (a map change, a
+-- cutscene starting). For 3 s after a map loads new skins are left to the map-load pass.
+-- Actors are kept by reference with their full name: a destroyed actor's address can be reused
+-- by a new object, and that one must not be touched (PC: "change None [Maelle].Body" a second
+-- after a battle ended). Skin actors of no party character (e.g. BP_Cine_Esquie) are left alone
+-- unless a slot tied to no character is picked, since nothing else could apply to them.
+local SPAWN = { again = {}, queued = {}, AFTER = { 1000, 2000 }, quietUntil = 0 }
+
+SPAWN.same = function(e)
+    step("new skin: still the same object?")
+    if not alive(e.a) then return false end
+    local ok, n = pcall(function() return e.a:GetFullName() end)
+    return ok and n ~= nil and n == e.name and leafName(e.a) ~= "None"
+end
+
+SPAWN.worth = function(a)
+    if not isWardrobeActor(a) then return false end
+    if not isSkinActor(a) or characterOf(a) then return true end
+    return next(activeFor(nil)) ~= nil
+end
+
+-- Why a new skin is not looked at (logged: PC, only 26 of 269 new skins were looked at, silently)
+SPAWN.dropped = {}
+SPAWN.drop = function(e, round)
+    local why
+    if not SPAWN.same(e) then
+        -- which part of "same" failed (PC: battle skins, visible in battle, all failed it)
+        local flags = TRACE.aliveWhy(e.a)
+        if flags == "invalid" then
+            why = "gone (invalid object) before the look"
+        elseif flags then
+            why = "skipped by its flags: " .. flags
+        else
+            local ok, n = pcall(function() return e.a:GetFullName() end)
+            why = (ok and n and n ~= e.name) and ("renamed before the look: now " .. tostring(n:match("([^%.:]+)$")))
+                or "gone or replaced before the look (named None)"
+        end
+    elseif not isWardrobeActor(e.a) then
+        why = "not a skin actor, and its class never showed a replaced mesh"
+    else
+        why = "no party character found for it, and no picked slot is for every character"
+    end
+    local cls = (e.name:match("^(%S+)") or "?") .. " " .. ((e.name:match("([^%.:]+)$") or "?"):gsub("_%d+$", ""))
+    local k = why .. "|" .. cls
+    SPAWN.dropped[k] = (SPAWN.dropped[k] or 0) + 1
+    if SPAWN.dropped[k] <= 2 then
+        live("  new skin %s not looked at (round %d): %s", tostring(e.name:match("([^%.:]+)$")), round, why)
+    end
+end
+
+SPAWN.entry = function(a)
+    local ok, n = pcall(function() return a:GetFullName() end)
+    if not ok or not n then return nil end
+    return { a = a, name = n }
+end
+
+-- AI companions (the party members walking behind the leader) are re-created after battles,
+-- mostly without a BeginPlay the mod gets to see (PC: 3 of 19 seen; they kept the game's outfit
+-- until Fix look). Every 2 s the classes learned in passes are looked up, and a companion whose
+-- body shows another mesh than when the mod last looked is looked at again (~8 calls each).
+SPAWN.seen = {}
+SPAWN.watch = function()
+    if not anyActive() or TRACE.busy() or not EXTRA_CLASS._names then return end
+    local t0 = os.clock()
+    -- PC, 14-15 Oct: every class in one frame took up to 757 ms (FindAllOf scans all objects).
+    -- Classes are taken in turn until the 8 ms are used up; the next watch goes on from there.
+    local names = {}
+    for cname in pairs(EXTRA_CLASS._names) do names[#names + 1] = cname end
+    table.sort(names)
+    local n = #names
+    for i = 0, n - 1 do
+        if i > 0 and (os.clock() - t0) * 1000 > 8 then return end
+        local cur = ((SPAWN.next or 1) - 1) % n + 1
+        SPAWN.next = cur % n + 1
+        local cname = names[cur]
+        step("watch: FindAllOf " .. cname)
+        local ok, all = pcall(FindAllOf, cname)
+        for _, a in ipairs(ok and all or {}) do
+            if (os.clock() - t0) * 1000 > 8 then return end
+            if alive(a) and leafName(a) ~= "None" then
+                local key = fullPath(a)
+                local function sig()          -- the body's mesh, by component name (see meshComponents)
+                    for _, e in ipairs(meshComponents(a)) do
+                        if (e.name == "CharacterMesh0" or e.name == "Body") and alive(e.comp) then
+                            local m = getMesh(e.comp)
+                            if m then return pkgPath(m) or "?" end
+                        end
+                    end
+                    return "-"
+                end
+                if key and SPAWN.seen[key] ~= sig() then
+                    GT_STATE = "companion " .. tostring(leafName(a))
+                    local okA, err = TRACE.timed(leafName(a) or "?", applyToActor, a)
+                    if not okA then log("apply failed: %s", tostring(err)) end
+                    SPAWN.seen[key] = sig()
+                end
+            end
+        end
+    end
+end
+
+local function recheckPending(round, waitedSince)
+    round = round or 1
+    if TRACE.busy() and loopTicks - (waitedSince or loopTicks) < 200 then   -- at most ~10 s
+        TRACE.st.waits = (TRACE.st.waits or 0) + 1
+        local since = waitedSince or loopTicks
+        later(250, function() recheckPending(round, since) end)
+        return
+    end
+    local todo = SPAWN.again[round] or {}
+    SPAWN.again[round] = {}
+    SPAWN.queued[round] = false
     local before = passChanges
-    for _, a in pairs(todo) do
-        if valid(a) and isWardrobeActor(a) then
-            local ok, err = pcall(applyToActor, a)
+    local keep = {}
+    -- about 8 ms of looks per frame; the rest in the next frames (PC: the four party-menu
+    -- characters took 95-309 ms each, all in one frame after every map load)
+    local t0, left = os.clock(), nil
+    for addr, e in pairs(todo) do
+        if left then
+            left[addr] = e
+        elseif (os.clock() - t0) * 1000 > 8 then
+            left = { [addr] = e }
+        elseif not (SPAWN.same(e) and SPAWN.worth(e.a)) then
+            if round == 1 then SPAWN.drop(e, round) end
+        else
+            keep[addr] = e
+            GT_STATE = "new skin " .. tostring(leafName(e.a))
+            if round == 1 and isSkinActor(e.a) then
+                step("new skin: owner")
+                local own = ownerOf(e.a)
+                KNOWN_SKINS[addr] = { a = e.a, name = e.name, owner = valid(own) and fullPath(own) or nil }
+            end
+            if round == 1 and TRACE.on then
+                -- what this skin belongs to and whether it is shown (copies the game keeps hidden?)
+                step("new skin: owner, parent, hidden")
+                local o = ownerOf(e.a)
+                local okO, oc = pcall(function() return valid(o) and leafName(o:GetClass()) or "none" end)
+                local okA, par = pcall(function() return e.a:GetAttachParentActor() end)
+                local okP, pc = pcall(function() return (okA and valid(par)) and leafName(par:GetClass()) or "none" end)
+                local okH, hid = pcall(function() return propOf(e.a, "bHidden", "BoolProperty") end)
+                local shows = "-"
+                for _, cn in ipairs({ "Body", "CharacterMesh0" }) do
+                    local okC, comp = pcall(propOf, e.a, cn, "ObjectProperty")
+                    if okC and alive(comp) then
+                        local m = getMesh(comp)
+                        shows = cn .. " " .. tostring(m and leafName(m) or "no mesh")
+                        break
+                    end
+                end
+                live("  new skin %s: owner %s, attached to %s, %s, shows %s", tostring(leafName(e.a)),
+                    okO and tostring(oc) or "-", okP and tostring(pc) or "-",
+                    okH and (hid and "hidden" or "shown") or "hidden: ?", shows)
+            end
+            local ok, err, ms = TRACE.timed(leafName(e.a) or "?", applyToActor, e.a)
             if not ok then log("apply failed: %s", tostring(err)) end
+            if ms > 20 then live("  slow: %s took %d ms", tostring(leafName(e.a)), math.floor(ms + 0.5)) end
         end
     end
     if passChanges > before then
         live("re-check after spawn: %d change(s)", passChanges - before)
         if afterPass then afterPass(true) end
     end
-end
-
-local function onSkinActor(a, delayOnly)
-    live("game %s %s", delayOnly and "re-assigned" or "spawned", tostring(leafName(a)))
-    if not delayOnly then spawned[a:GetAddress()] = a end
-    recheck[a:GetAddress()] = a
-    if not recheckQueued then
-        recheckQueued = true
-        later(math.max(50, SETTINGS.recheck_ms or 700), recheckPending)
+    if left then                                -- next frame, same round
+        local cur = SPAWN.again[round] or {}
+        for addr, e in pairs(left) do cur[addr] = e end
+        SPAWN.again[round] = cur
+        if not SPAWN.queued[round] then
+            SPAWN.queued[round] = true
+            later(50, function() recheckPending(round) end)
+        end
+    end
+    if round < #SPAWN.AFTER and next(keep) ~= nil then
+        local nxt = SPAWN.again[round + 1] or {}
+        for addr, e in pairs(keep) do nxt[addr] = e end
+        SPAWN.again[round + 1] = nxt
+        if not SPAWN.queued[round + 1] then
+            SPAWN.queued[round + 1] = true
+            later(SPAWN.AFTER[round + 1], function() recheckPending(round + 1) end)
+        end
     end
 end
 
-local function applySpawned()                   -- the game-thread loop
-    if next(spawned) == nil then return end
-    local todo = spawned
-    spawned = {}
-    for _, a in pairs(todo) do
-        if valid(a) and isWardrobeActor(a) then
-            GT_STATE = "skin spawn " .. tostring(leafName(a))
-            local ok, err = pcall(applyToActor, a)
-            if not ok then log("apply failed: %s", tostring(err)) end
-        end
+local function onSkinActor(a, delayOnly)
+    if not delayOnly then TRACE.st.spawns = (TRACE.st.spawns or 0) + 1 end
+    if B.onSpawn then pcall(B.onSpawn, a, delayOnly) end
+    local own = ownerOf(a)
+    local okO, ownerCls = pcall(function() return valid(own) and leafName(own:GetClass()) or nil end)
+    live("game %s %s%s", delayOnly and "re-assigned" or "spawned", tostring(leafName(a)),
+        okO and ownerCls and (" for " .. ownerCls) or "")
+    if loopTicks < SPAWN.quietUntil then return end      -- the map-load pass will handle it
+    local e = SPAWN.entry(a)
+    if not e then return end
+    SPAWN.again[1] = SPAWN.again[1] or {}
+    SPAWN.again[1][a:GetAddress()] = e
+    if not SPAWN.queued[1] then
+        SPAWN.queued[1] = true
+        later(math.max(SPAWN.AFTER[1], SETTINGS.recheck_ms or 0), function() recheckPending(1) end)
     end
 end
 
@@ -2823,22 +3665,494 @@ end
 
 -- Skins may be pooled and re-shown without a new BeginPlay; the native assign policy is called
 -- for every skin change, and tells us which character the skin belongs to.
-local function onAssigned(owner, charName)
-    if not valid(owner) then return end
-    for _, compName in ipairs({ "BP_CharacterSkinComponent", "BP_CinematicCharacterSkinComponent" }) do
-        local ok, sc = pcall(function() return owner[compName] end)
-        if ok and valid(sc) then
-            for _, prop in ipairs({ "SpawnedCharacterSkin", "SpawnedCharacterFace" }) do
-                local ok2, skin = pcall(function() return sc[prop] end)
-                if ok2 and valid(skin) then
-                    local c = normChar(charName)
-                    if c then CHAR_OF[skin:GetAddress()] = { name = skin:GetFullName(), char = c } end
-                    live("game assigned %s to %s", tostring(leafName(skin)), tostring(charName))
-                    onSkinActor(skin, true)
+local function onAssigned(ownerName, charName)
+    if not ownerName then return end
+    for addr, k in pairs(KNOWN_SKINS) do
+        if k.owner == ownerName then
+            if not SPAWN.same(k) then
+                KNOWN_SKINS[addr] = nil
+            else
+                local skin, c = k.a, normChar(charName)
+                SCENE_COPY[addr] = tostring(charName):lower() == "default" and fullPath(skin) or nil
+                if c then CHAR_OF[addr] = { name = k.name, char = c } end
+                if TRACE.memo and TRACE.memo.char then TRACE.memo.char[addr] = nil end
+                live("game assigned %s to %s", tostring(leafName(skin)), tostring(charName))
+                onSkinActor(skin, true)
+            end
+        end
+    end
+end
+
+
+-- --------------------------------------------------------------------------- redesign B probe
+-- Redesign B: give the game the picked variant's own skin Blueprint in its "dress this character"
+-- call, so the game dresses everyone itself instead of the mod re-dressing after it. This part
+-- only measures and tests; it changes nothing unless settings.txt / the menu set b_swap:
+--   * every skin call: which outfit class the game asks for, for whom ("B: call" lines);
+--   * whether every new skin follows such a call (the minute's "B:" summary);
+--   * how many picked variants bring their own skin Blueprint ("B: variants" line at start);
+--   * whether a soft reference can be made from a class, and read back ("B: built");
+--   * b_swap = param: the call's outfit is replaced before it runs; b_swap = call: the mod calls
+--     the game's AssignBodySkin with the variant's class after the game's own call. The spawn
+--     that follows says whether it took ("B: swap took" / "did not take").
+-- The calls the game uses pass the outfit as a soft reference, and UE4SS 3.0.1-1125 crashes on
+-- those (UE4SS #1433): they are only read on a build where it is fixed (1176), or b_soft = on.
+B.FIXED = { ["1ba38db4"] = true }       -- UE4SS 3.0.1-1176: #1433 fixed
+B.SLOTS = { AssignBodySkin = { "body" }, AssignBodySkinAsync = { "body" }, AssignFaceSkin = { "face" },
+            AssignFaceSkinAsync = { "face" }, AssignBodyAndFaceSkin = { "body", "face" },
+            AssignBodyAndFaceSkinAsync = { "body", "face" } }
+B.keys, B.pending, B.expect, B.built, B.checks, B.broken = {}, {}, {}, {}, {}, {}
+B.newStats = function()
+    return { calls = 0, spawns = 0, matched = 0, reshown = 0, without = {}, swaps = 0, took = 0, nottaken = 0 }
+end
+B.st = B.newStats()
+
+-- b_swap = call (fix11/fix12: the mod called the policy's AssignBodySkin itself) left bodies
+-- invisible and animations frozen until a restart (PC, 15 Oct): it is gone; such a setting is off.
+B.mode = function()
+    if SETTINGS.b_swap ~= "off" and SETTINGS.b_swap ~= "param" then
+        live("B: b_swap = %s is no longer offered (it broke bodies and animation in game): off", tostring(SETTINGS.b_swap))
+        SETTINGS.b_swap = "off"
+    end
+    return SETTINGS.b_swap
+end
+
+B.softOk = function()
+    if B.ok ~= nil then return B.ok end
+    local head = ""
+    local f = io.open(modDir .. "../../UE4SS.log", "r")
+    if f then head = f:read(4096) or "" f:close() end
+    B.sha = head:match("Git SHA #(%x+)")
+    local force = tostring(SETTINGS.b_soft or "auto")
+    if force == "on" then B.ok = true
+    elseif force == "off" then B.ok = false
+    else B.ok = B.sha ~= nil and B.FIXED[B.sha:sub(1, 8):lower()] == true end
+    live("B: UE4SS build %s (b_soft = %s): soft references %s", B.sha or "unknown", force,
+        B.ok and "are read" or "are not read (this build may crash on them, UE4SS #1433)")
+    return B.ok
+end
+
+B.ksl = function()
+    if B.kslObj == nil then
+        local o = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+        B.kslObj = valid(o) and o or false
+    end
+    return B.kslObj or nil
+end
+
+B.str = function(v)                     -- an FString / FName / Lua string as a Lua string
+    if type(v) == "string" then return v end
+    if v == nil then return nil end
+    local ok, s = pcall(function() return v:ToString() end)
+    return ok and type(s) == "string" and s or nil
+end
+
+-- The path in a soft reference, read two independent ways: UE4SS's own accessor and the engine's
+-- KismetSystemLibrary. Returns the path and both readings (they should agree).
+-- The engine's reading is a second UFunction call, so it is made only when asked (logged calls).
+B.path = function(soft, check)
+    if soft == nil then return nil end
+    -- an invalid UE4SS object answers IsValid() with false; a soft reference has no IsValid (error)
+    local okv, v = pcall(function() return soft:IsValid() end)
+    if okv and v == false then return nil end
+    local ok1, p1 = pcall(function() return B.str(soft:GetObjectID():GetAssetPathName()) end)
+    p1 = ok1 and p1 or nil
+    local p2
+    local k = check and B.ksl()
+    if k then
+        local ok2, r = pcall(function() return B.str(k:Conv_SoftClassReferenceToString(soft)) end)
+        p2 = ok2 and r or nil
+    end
+    -- "/Package/Path.Object_C" is wanted; a reading without the object part is the worse one
+    local best = (p1 and p1:find("%.")) and p1 or ((p2 and p2:find("%.")) and p2) or p1 or p2
+    return best, p1, p2
+end
+
+B.classPath = function(cls)             -- "/Game/X/BP_Y.BP_Y_C" of a loaded class
+    if not valid(cls) then return nil end
+    local pp, r = pkgPath(cls)
+    return pp and (pp .. "." .. r) or nil
+end
+
+B.charOf = function(name, path)         -- the party character a call is for
+    local c = normChar(name)
+    if c then return c end
+    local set, n = charsIn(path)
+    if n == 1 then return next(set) end
+    return nil
+end
+
+-- The picked variant's own copy of a skin class, if it has one (no side effects; see wanted())
+B.target = function(char, path)
+    local pkg, obj = tostring(path or ""):match("^([^%.]+)%.(.+)$")
+    if not pkg then return nil end
+    local key = pkg:lower()
+    local orig = TO_ORIGINAL[key]
+    local a = activeFor(char)[orig and orig:lower() or key]
+    if a and a.pkg:lower() ~= key and a.class == "BlueprintGeneratedClass" then return a.pkg, a.obj end
+    return nil
+end
+
+-- noLoad: inside the game's own call, only a class already in memory (no synchronous load there)
+-- With Wear on: the picked variant's own Blueprint class for this character, whatever outfit the
+-- game asks for (PC: the party wore their base skins, BP_CharacterSkinBase_*, and Wear put the
+-- Chic outfit over them, so the Chic Blueprint never matched what the game asked for). Same
+-- choice as Wear's mesh (forcedFor): the latest pick among this character's Wear slots.
+B.wearTarget = function(char)
+    if not char then return nil end
+    local wear, best, bestPick = wearSet(), nil, -1
+    for _, slot in ipairs(SLOTS) do
+        if wear[slot.id] and (slot.character == char or (not slot.character and Wear.slotChars(slot)[char]))
+           and (PICK[slot.id] or 0) > bestPick then
+            local v = selectedVariant(slot)
+            for orig, e in pairs(v and v.map or {}) do
+                -- a Blueprint whose path names characters must name this one: a mod split per
+                -- character keeps every Blueprint in each part (Altered Flower Suit: Sciel's
+                -- BP_CharacterSkin_ScielOutfit_FlowerSuit in the Lune part too)
+                local named, n = charsIn(orig)
+                if e[3] == "BlueprintGeneratedClass" and ((n > 0 and named[char]) or (n == 0 and slot.character == char)) then
+                    best, bestPick = { pkg = e[1], obj = e[2] }, PICK[slot.id] or 0
                 end
             end
         end
     end
+    if best then return best.pkg, best.obj end
+    return nil
+end
+
+B.softFor = function(pkg, obj, noLoad)  -- a soft reference to a loaded class, made by the engine
+    local key = (pkg .. "." .. obj):lower()
+    if B.built[key] ~= nil then return B.built[key] or nil end
+    local k = B.ksl()
+    if not k then return nil end
+    local cls
+    if noLoad then
+        local o = StaticFindObject(pkg .. "." .. obj)
+        cls = (valid(o) and alive(o)) and o or nil
+    else
+        step("B: load " .. pkg)
+        cls = loadObj(pkg, obj)
+    end
+    if not cls then return nil end      -- not loaded yet: try again next time
+    step("B: Conv_ClassToSoftClassReference")
+    local ok, s = pcall(function() return k:Conv_ClassToSoftClassReference(cls) end)
+    B.built[key] = (ok and s ~= nil) and s or false
+    if not B.built[key] then live("B: could not make a soft reference to %s.%s: %s", pkg, obj, tostring(s)) end
+    return B.built[key] or nil
+end
+
+-- Before the game's skin call runs (UE4SS pre-hook): read what it asks for; with b_swap = param,
+-- replace the outfit with the picked variant's own class.
+B.pre = function(fn, ctx, owner, charName, p1, p2)
+    if not onGameThread() then return end
+    local soft = fn:find("Async$") ~= nil
+    if soft and not B.softOk() then return end
+    step("B: read the call " .. fn)
+    local c = B.str(paramGet(charName)) or "?"
+    local ow = paramGet(owner)
+    local okw, ownerCls = pcall(function()
+        if not valid(ow) then return "none" end
+        local oc = ow:GetClass()
+        return valid(oc) and leafName(oc) or "?"
+    end)
+    ownerCls = okw and ownerCls or "?"
+    local parts, req = {}, {}
+    local key0 = fn .. "|" .. c .. "|" .. ownerCls
+    local logIt = (B.keys[key0] or 0) < 2      -- the first calls per function and name: cross-checked
+    for i, what in ipairs(B.SLOTS[fn] or {}) do
+        local p = (i == 1) and p1 or p2
+        if p then
+            local path, a, b
+            if soft then
+                path, a, b = B.path(paramGet(p), logIt)
+            else
+                path = B.classPath(paramGet(p))
+            end
+            if a and b and a ~= b then
+                parts[#parts + 1] = string.format("%s %s (the engine reads %s)", what, a, b)
+            else
+                parts[#parts + 1] = what .. " " .. tostring(path)
+            end
+            req[#req + 1] = { what = what, path = path, p = p }
+        end
+    end
+    B.st.calls = B.st.calls + 1
+    B.keys[key0] = (B.keys[key0] or 0) + 1
+    local key = key0 .. "|" .. table.concat(parts, "|")
+    B.keys[key] = (B.keys[key] or 0) + 1
+    if B.keys[key] <= 2 then
+        live("B: call %s for %s (owner %s): %s%s", fn, c, ownerCls, table.concat(parts, ", "),
+            "")
+    end
+    local char = nil
+    for _, r in ipairs(req) do
+        if r.path and r.path ~= "" and r.path ~= "None" then
+            local k = r.path:lower()
+            local e = B.pending[k] or { n = 0 }
+            e.n, e.t, e.char = e.n + 1, os.clock(), c
+            B.pending[k] = e
+            char = char or B.charOf(c, r.path)
+            local pkg, obj = B.target(char, r.path)
+            local how = "replaces"
+            if not pkg and r.what == "body" then
+                pkg, obj = B.wearTarget(char)
+                how = "Wear"
+                -- already the variant's class (the game asks for what a swap gave it): nothing to do
+                if pkg and (pkg .. "." .. obj):lower() == r.path:lower() then pkg = nil end
+            end
+            if pkg and B.broken[(pkg .. "." .. obj):lower()] then
+                pkg = nil                       -- it broke a body before (B.checkBody): not again this session
+            end
+            if pkg and c ~= "?" then
+                if SETTINGS.b_swap == "param" and soft then
+                    local s = B.softFor(pkg, obj, true)
+                    if s then
+                        step("B: write the call's " .. r.what)
+                        local okw, err = pcall(function() r.p:set(s) end)
+                        local back = B.path(paramGet(r.p))
+                        B.st.swaps = B.st.swaps + 1
+                        e.swappedTo = pkg .. "." .. obj
+                        local ek = (pkg .. "." .. obj):lower()
+                        local x0 = B.expect[ek]       -- several swaps to one class: one "took" each
+                        B.expect[ek] = { t = os.clock(), char = c, from = r.path,
+                                         n = ((x0 and os.clock() - x0.t < 20) and x0.n or 0) + 1 }
+                        local ow = paramGet(owner)
+                        if valid(ow) and r.what == "body" then
+                            B.checks[#B.checks + 1] = { ek = ek, owner = ow, name = fullPath(ow), char = c, t = os.clock() }
+                        end
+                        live("B: swap (param, %s) %s %s for %s: %s -> %s.%s: %s; the call now asks for %s", how, fn,
+                            r.what, c, r.path, pkg, obj, okw and "written" or ("write failed: " .. tostring(err)),
+                            tostring(back))
+                    else
+                        live("B: swap (param) for %s skipped: %s.%s is not ready yet (prepared after a pick)", c, pkg, obj)
+                        later(100, function() pcall(B.softFor, pkg, obj) end)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- A skin the game spawned (or showed again): did a call ask for its class? Did a swap take?
+B.onSpawn = function(a, reshown)
+    local okc, cls = pcall(function() return a:GetClass() end)
+    local cp = okc and B.classPath(cls)
+    if not cp then return end
+    local k, now = cp:lower(), os.clock()
+    local x = B.expect[k]
+    if x and now - x.t < 20 then
+        x.n = (x.n or 1) - 1
+        if x.n <= 0 then B.expect[k] = nil end
+        B.st.took = B.st.took + 1
+        live("B: swap took: the game %s %s for %s (it had asked for %s)", reshown and "showed" or "spawned", cp,
+            x.char, x.from)
+        for i, ch in ipairs(B.checks) do       -- the character that call dressed: look at its body soon
+            if ch.ek == k then
+                table.remove(B.checks, i)
+                later(2000, function() pcall(B.checkBody, ch, cp) end)
+                break
+            end
+        end
+    end
+    local e = B.pending[k]
+    if e and now - e.t < 15 then
+        if e.swappedTo then
+            B.st.nottaken = B.st.nottaken + 1
+            live("B: swap did not take: the game %s its own %s for %s", reshown and "showed" or "spawned", cp, e.char)
+        end
+        e.n = e.n - 1
+        if e.n <= 0 then B.pending[k] = nil end
+        if reshown then B.st.reshown = B.st.reshown + 1 else B.st.matched = B.st.matched + 1 end
+    elseif not reshown and not x then
+        local n = leafName(cls) or cp
+        B.st.without[n] = (B.st.without[n] or 0) + 1
+    end
+    if not reshown then B.st.spawns = B.st.spawns + 1 end
+end
+
+-- 2 s after a swap took: the body of the character the game dressed. PC, 16 Oct: with a multi-outfit
+-- mod's relocated Sciel Blueprint the cutscene Sciel's Body had no mesh (lower body invisible),
+-- in both swap tests (call and param). A broken body stops swaps to that class for the session.
+B.checkBody = function(ch, cp)
+    if not (alive(ch.owner) and fullPath(ch.owner) == ch.name) then
+        live("B: after the swap to %s, %s is gone: body not checked", cp, tostring(ch.name))
+        return
+    end
+    local function judge(comp, cn)
+        local m = getMesh(comp)
+        if m then
+            live("B: after the swap %s (%s).%s shows %s", tostring(leafName(ch.owner)), ch.char, cn,
+                tostring(pkgPath(m) or leafName(m)))
+        else
+            B.broken[ch.ek] = true
+            live("B: swap broke the body: %s (%s).%s has no mesh after the game used %s; no more swaps to it "
+                .. "this session (switch the test off; the next re-dress shows the game's outfit)",
+                tostring(leafName(ch.owner)), ch.char, cn, cp)
+        end
+    end
+    -- the body by its component's own name, never through a property (see meshComponents): Body on
+    -- skin actors and world pawns, CharacterMesh0 on battle and companion pawns (their empty
+    -- "SkeletalMesh" component is not the body)
+    local list, shown = meshComponents(ch.owner), {}
+    for _, cn in ipairs({ "Body", "CharacterMesh0" }) do
+        for _, e in ipairs(list) do
+            if e.name == cn and alive(e.comp) and isA(e.comp, "/Script/Engine.SkeletalMeshComponent") then
+                return judge(e.comp, cn)
+            end
+        end
+    end
+    -- a pawn whose body component is named at run time: what its skeletal meshes show, without
+    -- judging which is the body
+    for _, e in ipairs(list) do
+        local m, kind = getMesh(e.comp)
+        if kind == "skel" and #shown < 4 then
+            shown[#shown + 1] = tostring(e.name) .. " " .. tostring(m and (pkgPath(m) or leafName(m)) or "no mesh")
+        end
+    end
+    live("B: after the swap %s (%s) has no Body or CharacterMesh0 to check; its skeletal meshes: %s",
+        tostring(leafName(ch.owner)), ch.char, #shown > 0 and table.concat(shown, ", ") or "none")
+end
+
+B.minute = function()                   -- one summary line per minute (with "stats")
+    local st, now = B.st, os.clock()
+    local stale = 0
+    for k, e in pairs(B.pending) do
+        if now - e.t >= 15 then stale = stale + e.n B.pending[k] = nil end
+    end
+    for i = #B.checks, 1, -1 do                 -- swaps whose skin never appeared
+        if now - B.checks[i].t >= 20 then table.remove(B.checks, i) end
+    end
+    for k, x in pairs(B.expect) do
+        if now - x.t >= 20 then
+            live("B: swap to %s for %s: no skin of that class appeared within 20 s", k, x.char)
+            B.expect[k] = nil
+        end
+    end
+    B.st = B.newStats()
+    if st.calls + st.spawns + st.swaps + st.reshown + st.took == 0 then return end
+    local w, nw = {}, 0
+    for n, c in pairs(st.without) do nw = nw + c w[#w + 1] = n .. (c > 1 and (" x" .. c) or "") end
+    table.sort(w)
+    live("B: %d call(s); %d new skin(s): %d after a call for that class, %d without%s; %d shown again after a call; "
+        .. "%d asked-for skin(s) (bodies and faces) with no new one within 15 s; swaps %d: took %d, did not take %d",
+        st.calls, st.spawns, st.matched, nw, nw > 0 and (" (" .. table.concat(w, ", ") .. ")") or "", st.reshown,
+        stale, st.swaps, st.took, st.nottaken)
+    if not (SETTINGS.auto_apply and anyActive()) then
+        live("B: (new skins are only watched while something is picked and \"Apply to new skins\" is on)")
+    end
+end
+
+-- Picks changed: the call-mode stops start over, and the picked variants' classes are prepared
+-- (loaded, soft reference made) outside the game's own calls.
+B.changed = function()
+    if SETTINGS.b_swap ~= "off" and B.ok then later(500, function() pcall(B.preload) end) end
+end
+B.preload = function()
+    for _, c in ipairs({ "Lune", "Maelle", "Sciel", "Verso", "Monoco", "Gustave" }) do
+        local pkg, obj = B.wearTarget(c)
+        if pkg then B.softFor(pkg, obj) end
+    end
+    for _, slot in ipairs(SLOTS) do
+        local v = selectedVariant(slot)
+        for _, e in pairs(v and v.map or {}) do
+            if e[3] == "BlueprintGeneratedClass" then B.softFor(e[1], e[2]) end
+        end
+    end
+end
+
+-- At start: how many picked-or-not variants bring their own skin Blueprint (those the game could
+-- dress itself as they are); the others replace meshes or textures only.
+B.inventory = function()
+    local total, own, perMod, names = 0, 0, {}, {}
+    for _, slot in ipairs(SLOTS) do
+        for _, v in ipairs(slot.variants or {}) do
+            total = total + 1
+            local has = false
+            for _, e in pairs(v.map or {}) do
+                if e[3] == "BlueprintGeneratedClass" then
+                    has = true
+                    if #names < 6 then names[#names + 1] = e[2] end
+                end
+            end
+            local m = slot.mod or "?"
+            perMod[m] = perMod[m] or { 0, 0 }
+            perMod[m][2] = perMod[m][2] + 1
+            if has then own = own + 1 perMod[m][1] = perMod[m][1] + 1 end
+        end
+    end
+    local parts = {}
+    for m, c in pairs(perMod) do parts[#parts + 1] = string.format("%s %d/%d", m, c[1], c[2]) end
+    table.sort(parts)
+    live("B: variants: %d of %d bring their own Blueprint class (%s); per mod: %s", own, total,
+        #names > 0 and table.concat(names, ", ") or "none", table.concat(parts, "; "))
+end
+
+-- Once per session, a few seconds after the first map: the functions a redesign could use (names
+-- and types only), the build test, and what each character's skin component says it wears.
+B.prepare = function()
+    if B.prepared then return end
+    local function sig(full)
+        local okf, f = pcall(StaticFindObject, full)
+        if not (okf and valid(f)) then live("B: function %s not found", full) return end
+        local params = {}
+        pcall(function()
+            f:ForEachProperty(function(pr)
+                params[#params + 1] = pr:GetClass():GetFName():ToString() .. " " .. pr:GetFName():ToString()
+            end)
+        end)
+        live("B: function %s(%s)", full:match("[^%.:]+:[^:]+$") or full, table.concat(params, ", "))
+    end
+    -- after a map with characters (the first map is often the title screen, without any)
+    step("B: skin components")
+    local okc, comps = pcall(FindAllOf, "BP_CharacterSkinComponent_C")
+    local first = okc and type(comps) == "table" and comps[1] or nil
+    local okp, cpath = pcall(function()
+        if not alive(first) then return nil end
+        local cls = first:GetClass()
+        return valid(cls) and B.classPath(cls) or nil
+    end)
+    if not (okp and cpath) then return end
+    B.prepared = true
+    for _, fn in ipairs({ "Conv_ClassToSoftClassReference", "Conv_SoftClassReferenceToString",
+                          "Conv_SoftClassReferenceToClass" }) do
+        sig("/Script/Engine.KismetSystemLibrary:" .. fn)
+    end
+    for _, fn in ipairs({ "OverrideCharacterSkin", "SetCharacterCustomization", "ApplyCurrentCharacterSkin",
+                          "ApplyCurrentCustomization" }) do
+        sig(cpath .. ":" .. fn)
+    end
+    -- only with the test on: it loads Blueprints on the game thread (a hitch for nothing otherwise)
+    if not B.softOk() or B.mode() == "off" then return end
+    -- the build test: a soft reference to each picked variant's own skin class, read back
+    local done = 0
+    for _, slot in ipairs(SLOTS) do
+        local v = selectedVariant(slot)
+        for _, e in pairs(v and v.map or {}) do
+            if done < 6 and e[3] == "BlueprintGeneratedClass" then
+                done = done + 1
+                local s = B.softFor(e[1], e[2])
+                local back = s and B.path(s, true)
+                local want = e[1] .. "." .. e[2]
+                live("B: built a soft reference to %s: %s", want, not s and "failed"
+                    or (back == want and "reads back the same" or ("reads back " .. tostring(back))))
+                -- what the game will copy from it: its Body template, next to the game's own class
+                local function body(pkg, obj)
+                    local c = loadObj(pkg, obj)
+                    if not c then return "not loaded" end
+                    local t = classTemplates(c, { "Body" }).Body
+                    if not t then return "no Body template" end
+                    local m = getMesh(t)
+                    local okM, mats = pcall(function() return #arrayItems(propOf(t, "OverrideMaterials", "ArrayProperty")) end)
+                    return string.format("mesh %s, %s material override(s)", tostring(m and pkgPath(m) or "none"),
+                        okM and tostring(mats) or "?")
+                end
+                local orig = TO_ORIGINAL[e[1]:lower()]
+                live("B: Blueprint %s: Body %s; the game's own %s: Body %s", e[2], body(e[1], e[2]),
+                    tostring(orig), orig and body(orig, e[2]) or "-")
+            end
+        end
+    end
+    if done == 0 then live("B: no picked variant brings its own skin Blueprint: nothing to build") end
 end
 
 local POLICY_FUNCS = { "AssignBodySkin", "AssignBodySkinAsync", "AssignFaceSkin", "AssignFaceSkinAsync",
@@ -2848,20 +4162,60 @@ local policyHooks, hooked = 0, false
 -- Called once on the game thread: every hook of this mod is registered from there.
 local function registerHooks()
     hooked = pcall(function()
+        -- timed: the hook runs for every actor the game creates (PC: up to 25 000 times in one
+        -- map-load stall), outside the loop the hitch lines measure
+        local onBeginPlay
         RegisterBeginPlayPostHook(function(actor)
+            local t0 = os.clock()
+            local ok, err = pcall(onBeginPlay, actor)
+            TRACE.bpMs, TRACE.bpN = (TRACE.bpMs or 0) + (os.clock() - t0) * 1000, (TRACE.bpN or 0) + 1
+            if not ok then error(err, 0) end
+        end)
+        onBeginPlay = function(actor)
+            TRACE.bp = TRACE.bp + 1                 -- spawn burst detection (plain Lua)
+            if TRACE.on and liveF then TRACE.scene(paramGet(actor)) end
             if SETTINGS.clean then
                 local ka = paramGet(actor)
                 if valid(ka) and isWardrobeActor(ka) then
-                    later(1000, function() Clean.actor(ka, Clean.newStats()) end)
+                    local kn = fullPath(ka)
+                    later(1000, function() if alive(ka) and fullPath(ka) == kn then Clean.actor(ka, Clean.newStats()) end end)
                 end
             end
-            if not SETTINGS.auto_apply or not anyActive() then return end
+            if not SETTINGS.auto_apply or not anyActive() then
+                -- a swap test waits for its skin even then (B.onSpawn runs from onSkinActor otherwise)
+                if next(B.expect or {}) ~= nil then
+                    local x = paramGet(actor)
+                    if valid(x) and isWardrobeActor(x) then pcall(B.onSpawn, x) end
+                end
+                return
+            end
             local a = paramGet(actor)
             if valid(a) and isWardrobeActor(a) then onGT(onSkinActor, a, false) end
-        end)
+        end
     end)
+    -- Probe for a possible redesign (giving the game the picked outfit before it dresses anyone):
+    -- each function's parameter list, read from the function itself (names and types only, never
+    -- a value), and how often each is called through ProcessEvent (only those calls can be
+    -- changed before they run). Written to the live log; counted in the stats line.
+    TRACE.policy = {}
     for _, fn in ipairs(POLICY_FUNCS) do
-        local ok = pcall(RegisterHook, "/Script/SandFall.CharacterSkinAssignPolicy:" .. fn, function() end,
+        pcall(function()
+            local f = StaticFindObject("/Script/SandFall.CharacterSkinAssignPolicy:" .. fn)
+            if not valid(f) then live("probe: %s not found", fn) return end
+            local params = {}
+            f:ForEachProperty(function(pr)
+                params[#params + 1] = pr:GetClass():GetFName():ToString() .. " " .. pr:GetFName():ToString()
+            end)
+            live("probe: %s(%s)", fn, table.concat(params, ", "))
+        end)
+    end
+    for _, fn in ipairs(POLICY_FUNCS) do
+        local ok = pcall(RegisterHook, "/Script/SandFall.CharacterSkinAssignPolicy:" .. fn,
+            function(ctx, owner, charName, p1, p2)
+                TRACE.policy[fn] = (TRACE.policy[fn] or 0) + 1
+                local okB, errB = pcall(B.pre, fn, ctx, owner, charName, p1, p2)
+                if not okB then live("B: reading the call %s failed: %s", fn, tostring(errB)) end
+            end,
             function(_, owner, charName)
                 if not onGameThread() then return end
                 local o = owner and paramGet(owner)
@@ -2871,21 +4225,64 @@ local function registerHooks()
                     if okc then c = s end
                 end
                 Fix.noteName(o, c)                  -- the name Fix look passes back to the game
+                if valid(o) then SCENE_COPY[o:GetAddress()] = tostring(c):lower() == "default" and fullPath(o) or nil end
                 -- a pooled skin re-shown without a BeginPlay: clean it too, picks or not
-                if SETTINGS.clean and Clean.owner then later(1000, function() Clean.owner(o) end) end
+                local oName = valid(o) and fullPath(o) or nil
+                if SETTINGS.clean and Clean.owner then
+                    later(1000, function() if alive(o) and fullPath(o) == oName then Clean.owner(o) end end)
+                end
                 if not SETTINGS.auto_apply or not anyActive() then return end
-                later(50, function() onAssigned(o, c) end)
+                later(50, function() onAssigned(oName, c) end)
             end)
         if ok then policyHooks = policyHooks + 1 end
     end
     -- After a level loads, one full pass also reaches actors that aren't skin actors (world / menu
     -- pawns showing a replaced base body), and learns their classes for the BeginPlay hook.
     pcall(RegisterLoadMapPreHook, function() if Clean.forget then Clean.forget() end end)
+    -- A new map, from either hook (whichever fires first; the other is ignored for 5 s). With
+    -- UE4SS-settings.ini HookLoadMap = 0 (PC: one crash came from inside the engine's LoadMap,
+    -- called through UE4SS's LoadMap hook) InitGameState still tells the mod.
+    local function mapLoaded(wname, via)
+        if os.clock() - (SPAWN.mapAt or -100) < 5 then return end
+        -- a map right after another (PC 17 Oct: world map, then camp 11 s later, crash 3 s after
+        -- that in the map-load pass): give the game 6 s instead of 3 to finish loading
+        local wait = (os.clock() - (SPAWN.mapAt or -100) < 30) and 6000 or 3000
+        SPAWN.mapAt = os.clock()
+        live("map loaded: %s%s", tostring(wname or "?"), via and (" (" .. via .. ")") or "")
+        SPAWN.quietUntil = loopTicks + wait // 50   -- new skins are left to the map-load pass
+        TRACE.clsSkip = {}
+        for k in pairs(FORCED_FROM) do FORCED_FROM[k] = nil end   -- every component is new now
+        -- objects of the previous map: their addresses can be reused by new ones
+        Wear.donor = {}
+        for k in pairs(CHAR_OF) do CHAR_OF[k] = nil end
+        for k in pairs(SCENE_COPY) do SCENE_COPY[k] = nil end
+        for k in pairs(KNOWN_SKINS) do KNOWN_SKINS[k] = nil end
+        SPAWN.seen, SPAWN.dropped = {}, {}
+        TRACE.tmpl = {}
+        TRACE.used = {}
+        if Fix.forget then Fix.forget() end
+        B.built, B.pending, B.expect = {}, {}, {}
+        if not B.prepared then later(8000, function() pcall(B.prepare) end) end
+        -- a diagnostic (~70 ms once): only in test sessions (b_swap on), not for every player
+        if not TRACE.speedDone and wname and wname ~= "Level_MainMenu" and B.mode() ~= "off" then
+            later(9000, function() pcall(TRACE.speedTest) end)
+        end
+        if B.changed then later(9000, function() pcall(B.changed) end) end
+        if SETTINGS.auto_apply and anyActive() then later(wait, function() applyAll("after map load") end) end
+        if SETTINGS.clean then later(wait + 500, function() Clean.all("map loaded") end) end
+    end
     pcall(RegisterLoadMapPostHook, function(_, world)
         local okw, wname = pcall(function() return leafName(paramGet(world)) end)
-        live("map loaded: %s", okw and tostring(wname) or "?")
-        if SETTINGS.auto_apply and anyActive() then later(3000, function() applyAll("after map load") end) end
-        if SETTINGS.clean then later(3500, function() Clean.all("map loaded") end) end
+        mapLoaded(okw and wname or nil)
+    end)
+    pcall(RegisterInitGameStatePostHook, function(ctx)
+        local okw, wname = pcall(function()
+            local gm = paramGet(ctx)
+            if not valid(gm) then return nil end
+            local w = gm:GetWorld()
+            return valid(w) and leafName(w) or nil
+        end)
+        mapLoaded(okw and wname or nil, "game state")
     end)
     pcall(RegisterConsoleCommandHandler, "wardrobe", onConsole)
     if MENU.registerHooks then pcall(MENU.registerHooks) end
@@ -2894,8 +4291,52 @@ end
 -- The game-thread loop: inbox (keys, clicks), the mod's timers, new skins, the menu, the
 -- debounced apply pass. Its timestamp is the heartbeat the watchdog reads.
 local function loopBody()
+    if TRACE.wdBeat then
+        -- after a WATCHDOG line: the game went on (a long load), it wasn't a freeze
+        live("WATCHDOG: the game thread ran again after %d s", os.time() - TRACE.wdBeat)
+        TRACE.wdBeat = nil
+    end
     GT_BEAT = os.time()
     loopTicks = loopTicks + 1
+    TRACE.tick = loopTicks
+    local tickT0 = os.clock()
+    if TRACE.lastTick then
+        -- the loop runs every 50 ms; a longer gap is a frame the game took that long for
+        local gap = (tickT0 - TRACE.lastTick) * 1000
+        local st = TRACE.st
+        if gap >= 500 or TRACE.bp >= 5 then TRACE.busyAt = loopTicks end
+        TRACE.bp = 0
+        if gap >= 150 and gap < 6000 then
+            st.hitches = st.hitches + 1
+            if gap > st.worst then st.worst = gap end
+            if tickT0 - TRACE.lastHitch >= 1 then  -- at most one line a second
+                TRACE.lastHitch = tickT0
+                live("hitch: a frame took %d ms (mod work in the tick before: %d ms; last mod step: %s; "
+                    .. "BeginPlay hook meanwhile: %d ms in %d call(s))",
+                    math.floor(gap + 0.5), math.floor(TRACE.tickMs + 0.5), TRACE.step,
+                    math.floor((TRACE.bpMs or 0) + 0.5), TRACE.bpN or 0)
+            end
+        end
+        if tickT0 - st.since >= 60 then
+            live("stats (%d s): %d actor look(s) in %d ms (slowest %s %d ms), %d mesh set(s), %d pass(es) in %d ms, %d hitch(es) (worst %d ms), %d object(s) skipped (loading/destroyed), %d wait(s) for calm, BeginPlay hook %d ms in %d call(s)",
+                math.floor(tickT0 - st.since + 0.5), st.actors, math.floor(st.actorMs + 0.5), st.slowName,
+                math.floor(st.slowest + 0.5), st.sets, st.passes, math.floor(st.passMs + 0.5), st.hitches, math.floor(st.worst + 0.5),
+                st.skipped or 0, st.waits or 0, math.floor((st.bpMs or 0) + 0.5), st.bpN or 0)
+            if TRACE.policy and next(TRACE.policy) then
+                local parts = {}
+                for k, v in pairs(TRACE.policy) do parts[#parts + 1] = k .. " " .. v end
+                table.sort(parts)
+                live("probe: calls seen before they run: %s; new skins seen: %d", table.concat(parts, ", "), st.spawns or 0)
+                TRACE.policy = {}
+            end
+            pcall(B.minute)
+            TRACE.st = { actors = 0, actorMs = 0, slowest = 0, slowName = "", sets = 0, passes = 0, passMs = 0,
+                         hitches = 0, worst = 0, since = tickT0 }
+        end
+    end
+    TRACE.st.bpMs = (TRACE.st.bpMs or 0) + (TRACE.bpMs or 0)
+    TRACE.st.bpN = (TRACE.st.bpN or 0) + (TRACE.bpN or 0)
+    TRACE.bpMs, TRACE.bpN = 0, 0
     if #INBOX > 0 then
         local evs = INBOX
         INBOX = {}
@@ -2911,10 +4352,22 @@ local function loopBody()
         SCHED = keep
         for _, t in ipairs(due) do onGT(t.f) end
     end
-    if next(spawned) ~= nil then onGT(applySpawned) end
     if MENU.wantsTick and MENU.wantsTick() then onGT(MENU.tick) end
     if PASS.due and loopTicks >= PASS.due then onGT(applyIfDue) end
     if SETTINGS.clean and loopTicks % 20 == 0 then onGT(Clean.keep) end
+    if SETTINGS.auto_apply and loopTicks % 40 == 0 then onGT(SPAWN.watch) end
+    if loopTicks % 20 == 7 then onGT(TRACE.commands) end
+    TRACE.lastTick = os.clock()
+    TRACE.tickMs = (TRACE.lastTick - tickT0) * 1000
+    if TRACE.tickMs >= 150 then
+        -- the gap above is measured between ticks, so a long frame made by the mod's own work
+        -- shows here, not there
+        local st = TRACE.st
+        st.hitches = st.hitches + 1
+        if TRACE.tickMs > st.worst then st.worst = TRACE.tickMs end
+        live("hitch: the mod's own work took %d ms in one frame (last mod step: %s)",
+            math.floor(TRACE.tickMs + 0.5), TRACE.step)
+    end
 end
 
 -- --------------------------------------------------------------------------- watchdog
@@ -2934,8 +4387,24 @@ if HAS_GT_LOOP then pcall(LoopAsync, 1000, function()
         local now = os.time()
         if now - GT_BEAT >= 6 and now - wdLast >= 15 then
             wdLast = now
+            TRACE.wdBeat = GT_BEAT
             live("WATCHDOG: the game thread has not run for %d s; mod state: %s (since %s)", now - GT_BEAT, GT_STATE,
                 os.date("%H:%M:%S", GT_STATE_SINCE))
+            if TRACE.on and TRACE.beat ~= GT_BEAT then
+                -- once per stall: the mod's last steps, oldest first; the last one is where it stopped
+                -- if the mod state above isn't "idle"
+                TRACE.beat = GT_BEAT
+                local last = TRACE.ring[TRACE.n]
+                local t1 = last and last.t or 0
+                live("WATCHDOG: last mod step: %s", TRACE.step)
+                for i = 1, TRACE.size do
+                    local e = TRACE.ring[(TRACE.n + i - 1) % TRACE.size + 1]
+                    if e then
+                        live("  step %6d ms: %s%s", math.floor((e.t - t1) * 1000 - 0.5), e.s,
+                            e.k and string.format(" (x%d)", e.k) or "")
+                    end
+                end
+            end
         end
     end)
     return false
@@ -3036,6 +4505,10 @@ local function startOnGameThread()
     live("game-thread work runs in one game-thread loop every %d ms (LoopInGameThreadWithDelay)", TICK_MS)
     log("%s ready (%d policy hook(s)) - press %s for the menu. %s", VERSION, policyHooks,
         (KEYS.menu and KEYS.menu[1]) or "?", describe(currentSlot))
+    pcall(B.inventory)
+    pcall(B.mode)
+    pcall(B.softOk)
+    pcall(B.changed)                    -- prepares the picked variants' classes for the swap tests
 end
 if not HAS_GT_LOOP then
     -- Without it every timer and key would have to be queued to the game thread from another

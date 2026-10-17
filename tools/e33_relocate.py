@@ -558,6 +558,96 @@ def repair_flat(retoc, game_links, utoc, work, log):
     return dst, names
 
 
+def case_scan(retoc, utoc, work, log):
+    """(own names, imported names) of the packages in `utoc`, from their zen headers: the name each
+    package gives itself (what retoc compares an import with) and the package names it imports."""
+    tag = safe_name(os.path.basename(utoc)[:-5]) + '_' + hashlib.sha1(utoc.encode('utf-8')).hexdigest()[:8]
+    raw = os.path.join(work, 'caseScan_' + tag)
+    shutil.rmtree(raw, ignore_errors=True)
+    own, imported = [], set()
+    try:
+        run([retoc, 'unpack-raw', utoc, raw], log)
+        chunks = os.path.join(raw, 'chunks')
+        for cid in sorted(os.listdir(chunks)) if os.path.isdir(chunks) else []:
+            if not cid.lower().endswith('01'):          # chunk type 1: a package's export data
+                continue
+            with open(os.path.join(chunks, cid), 'rb') as f:
+                buf = f.read()
+            try:
+                own.append(e33utoc.zen_package_name(buf))
+                imported.update(e33utoc.with_number(b, n) for _o, _s, _w, b, n in e33utoc.zen_imported_packages(buf))
+            except e33utoc.UtocError:
+                continue
+        return own, imported
+    finally:
+        shutil.rmtree(raw, ignore_errors=True)
+
+
+def real_names(own_lists):
+    """{lower-case package name: real name} for the case repair: the names the mod's packages give
+    themselves. Never the game's: a mod links to a game package by the name it was cooked against,
+    which is the package's own name, and a game container's file index can spell it differently
+    (PC: index 'Civil/Textures/MI_Maelle_Civil_Top', package 'Civil/textures/...'). A name the mod
+    spells two ways is left out."""
+    names, twice = {}, set()
+    for own in own_lists:
+        for p in own:
+            low = p.lower()
+            if names.get(low, p) != p:
+                twice.add(low)
+            names[low] = p
+    for low in twice:
+        names.pop(low, None)
+    return names
+
+
+def needs_case_repair(imported, names):
+    """The imports of a container that differ from a real package name only in letter case."""
+    return sorted(i for i in imported if names.get(i.lower(), i) != i)
+
+
+def repair_case(retoc, utoc, names, work, log):
+    """Return a copy of `utoc` in which every imported package name that differs from the real
+    package's name only in letter case is spelled like the real one, or `utoc` itself if none
+    does. The game ignores the case (package IDs come from the lower-case name), retoc doesn't: it
+    turns such a link into /Engine/UnknownPackage, and the relocated copy then links to nothing
+    (a multi-outfit mod's Sciel Blueprint asks for SK_Sciel_Chic_Skin, the mod's mesh is
+    SK_Sciel_Chic_skin: no body). Rewritten with retoc unpack-raw / pack-raw, same length."""
+    tag = safe_name(os.path.basename(utoc)[:-5]) + '_' + hashlib.sha1(utoc.encode('utf-8')).hexdigest()[:8]
+    raw = os.path.join(work, 'caseRaw_' + tag)
+    shutil.rmtree(raw, ignore_errors=True)
+    changes = []
+    try:
+        run([retoc, 'unpack-raw', utoc, raw], log)
+        chunks = os.path.join(raw, 'chunks')
+        for cid in sorted(os.listdir(chunks)) if os.path.isdir(chunks) else []:
+            if not cid.lower().endswith('01'):          # chunk type 1: a package's export data
+                continue
+            path = os.path.join(chunks, cid)
+            with open(path, 'rb') as f:
+                buf = f.read()
+            try:
+                new, ch = e33utoc.fix_import_case(buf, names)
+            except e33utoc.UtocError:
+                continue
+            if ch:
+                with open(path, 'wb') as f:
+                    f.write(new)
+                changes += ch
+        if not changes:
+            return utoc, []
+        dst_dir = os.path.join(work, 'fixedCase_' + tag)
+        shutil.rmtree(dst_dir, ignore_errors=True)
+        os.makedirs(dst_dir)
+        dst = os.path.join(dst_dir, os.path.basename(utoc))
+        run([retoc, 'pack-raw', raw, dst], log)
+        log.write(f'fixed the letter case of {len(changes)} link(s) in {utoc}: '
+                  + ', '.join(f'{a} -> {b}' for a, b in changes) + '\n')
+        return dst, changes
+    finally:
+        shutil.rmtree(raw, ignore_errors=True)
+
+
 def keep_only(root, keep):
     """Delete extracted packages that aren't in `keep` (lower-case names), so a broad filter
     can never pack a base-game asset into a variant at its original path."""
@@ -732,7 +822,8 @@ def relocate_variant(retoc, game_links, mod_root, rel, work, out_dir, variant_id
                           'from the mod page missing from the library?')
         # The game resolves imports against the same game + mod data, so it can't find these either
         # when the original mod is installed: the reference is empty in game too. Cooked mods often
-        # carry such references to assets that were never cooked.
+        # carry such references to assets that were never cooked. (Links that differ from the real
+        # package only in letter case do resolve in game; repair_case fixes them before this.)
         notes.append(f'{where}: {sum(unresolved.values())} reference(s) to an asset that is in neither the game '
                      'nor this mod - left empty, as the game does with the original mod '
                      '(--strict-imports refuses such variants)')
@@ -1141,21 +1232,28 @@ def _main(argv, tee):
         for mod_root in a.mod:
             mod_root = os.path.normpath(mod_root)
             mod_name = os.path.basename(mod_root)
+            parked = None
+            if lua_dir and a.paks and e33fixes.is_disabled(e33fixes.load(lua_dir), mod_name):
+                # a disabled mod is prepared in ~mods as usual and moved back out afterwards.
+                # Before log.start: Windows can't rename a folder while relocate_log.txt in it is open.
+                parked = os.path.join(e33fixes.disabled_root(a.paks), mod_dirs[mod_name])
+                try:
+                    e33fixes.move_dir(parked, os.path.join(out_root, mod_dirs[mod_name]),
+                                      aside=e33fixes.disabled_root(a.paks))   # an old copy never stays in Paks
+                except OSError as e:            # a file in it is open (Explorer, antivirus): this mod only
+                    print(f'  note: {mod_name} is disabled and its folder could not be moved back to prepare '
+                          f'it ({e}); skipped, it stays as it was. Close what has its files open and try again.')
+                    continue
+                to_park.append((os.path.join(out_root, mod_dirs[mod_name]), parked))
             log_paths.append(os.path.join(out_root, mod_dirs[mod_name], 'relocate_log.txt'))
             log.start(log_paths[-1])
+            if parked:
+                print(f'  {mod_name} is disabled: it stays disabled after this run')
             # All of the mod's paks join the composite once, below the variant being extracted,
             # so assets a variant imports from a sibling or fix pak still resolve.
             siblings = []
             ctx['fixed'] = {}
             ctx['bundles'] = e33fixes.bundle_utocs(lua_dir, mod_name) if lua_dir else []
-            parked = None
-            if lua_dir and a.paks and e33fixes.is_disabled(e33fixes.load(lua_dir), mod_name):
-                # a disabled mod is prepared in ~mods as usual and moved back out afterwards
-                parked = os.path.join(e33fixes.disabled_root(a.paks), mod_dirs[mod_name])
-                e33fixes.move_dir(parked, os.path.join(out_root, mod_dirs[mod_name]),
-                                  aside=e33fixes.disabled_root(a.paks))   # an old copy never stays in Paks
-                to_park.append((os.path.join(out_root, mod_dirs[mod_name]), parked))
-                print(f'  {mod_name} is disabled: it stays disabled after this run')
             if not a.from_legacy:
                 # Repair flat file indexes first (some paks list files without folders).
                 for dp, _ds, fs in os.walk(mod_root):
@@ -1171,6 +1269,31 @@ def _main(argv, tee):
                                 ctx['fixed'][os.path.normcase(orig)] = fx
                                 print(f'  repaired the file index of {os.path.relpath(orig, mod_root)} '
                                       f'({len(names)} package(s) had no folder)')
+                # Then links whose letter case differs from the package they point to (see repair_case).
+                mod_utocs = [os.path.join(dp, f) for dp, _ds, fs in os.walk(mod_root) for f in fs
+                             if f.lower().endswith('.utoc')]
+                cur = lambda u: ctx['fixed'].get(os.path.normcase(u), u)  # noqa: E731
+                scans = {}
+                for u in mod_utocs + ctx['bundles']:
+                    try:
+                        scans[u] = case_scan(retoc, cur(u), work, log)
+                    except Exception as e:          # keep what we have; such links stay unresolved
+                        print(f'  note: could not read the links in {os.path.basename(u)}: {e}')
+                names = real_names(s[0] for s in scans.values())
+                for orig in mod_utocs:
+                    if orig not in scans or not needs_case_repair(scans[orig][1], names):
+                        continue
+                    try:
+                        fx, changed = repair_case(retoc, cur(orig), names, work, log)
+                    except Exception as e:
+                        fx, changed = cur(orig), []
+                        print(f'  note: could not fix the links in {os.path.basename(orig)}: {e}')
+                    if changed:
+                        ctx['fixed'][os.path.normcase(orig)] = fx
+                        print(f'  fixed the letter case of {len(changed)} link(s) in '
+                              f'{os.path.relpath(orig, mod_root)}: '
+                              + ', '.join(f'{a} -> {b}' for a, b in changed[:2])
+                              + (' ...' if len(changed) > 2 else ''))
                 for j, sib in enumerate(sorted(ctx['fixed'].get(os.path.normcase(os.path.join(dp, f)), os.path.join(dp, f))
                                                for dp, _ds, fs in os.walk(mod_root)
                                                for f in fs if f.lower().endswith('.utoc')) + ctx['bundles']):

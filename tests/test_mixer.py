@@ -3,6 +3,8 @@ import json, os, shutil, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'tools')); sys.path.insert(0, HERE)
 import e33_mixer, make_fake_library
+# the real game may be open on a dev PC; the test of that guard (below) switches it on itself
+e33_mixer.game_running = lambda *a, **k: False
 
 tmp = tempfile.mkdtemp(prefix='e33mix_')
 lib, paks = os.path.join(tmp, 'Library'), os.path.join(tmp, 'Paks')

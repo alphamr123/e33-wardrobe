@@ -1,5 +1,7 @@
 # Installation
 
+How to install the in-game menu and prepare outfit mods, with the app or by hand.
+
 **Easiest: use the app.** Install UE4SS, then run `E33 Wardrobe.exe` from the
 [releases page](https://github.com/alphamr123/e33-wardrobe/releases); it installs the menu and
 prepares your mods. See [APP.md](APP.md).
@@ -15,7 +17,10 @@ Tested on the Steam version. Game Pass should work but is untested.
 ## 1. The in-game menu
 
 **You need:** UE4SS for Clair Obscur, from its Nexus page (mod 630), file
-**"UE4SS - Experimental (Newer)"**. Older UE4SS builds don't work.
+**"UE4SS - Experimental (Newer)"**. Older UE4SS builds don't work. Tested with 3.0.1-1125 and
+3.0.1-1176; the first line of `ue4ss\UE4SS.log` names your build. The optional "Test: game dresses
+(B)" setting needs 1176 or newer (from the "experimental" release of UE4SS-RE/RE-UE4SS on GitHub
+if the Nexus file is older).
 
 1. Install UE4SS as its page describes.
 2. Install E33 Wardrobe:

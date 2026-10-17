@@ -85,6 +85,9 @@ Replacer mods often ship a copy of a game skeleton. By default the relocator dro
 (`--physics mod`); `--physics game` drops the mod's copy and uses the game's. A reference to an
 asset that exists in neither the game nor the mod is kept and reported; the game sees it as
 empty, as it does with the original mod installed. `--strict-imports` refuses such variants.
+A reference that differs from one of the mod's own packages only in letter case is respelled
+before extraction: the game resolves it, retoc wouldn't. References to game packages are left as
+they are.
 
 ## Why runtime hooks are enough
 
@@ -123,6 +126,28 @@ companion pawns), one pass:
 
 The outfit's `Body` on a skin actor and the world pawn's `Body` are the same component (the
 swap policy renders the outfit through the pawn), so each component is handled once per pass.
+
+Within one game-thread call (one loop tick), what has been read from the game is kept and
+reused: a material's texture parameters, a mesh's path, a class's property types, a character.
+It is dropped at the end of the call, after any asset load and after the game re-dresses a
+character, so nothing read in one frame is used in the next (the game frees objects between
+frames).
+
+What the mod reads is limited to what is safe to read:
+
+- A property is read by name only when its class lists it as a plain object reference (or a
+  name, number or yes/no value). Weak and soft references crash UE4SS 1125.
+- A character's mesh components come from the game's own list (`K2_GetComponentsByClass`),
+  named by their object names (Body, Face, CharacterMesh0, ...). Properties are read by name only
+  on outfit actors (skin and face Blueprints), whose Body and Face point at the walking
+  character's components. Two crashes at camp happened inside UE4SS 1176's property cache while
+  reading a camp character's "Face"; camp Blueprints are loaded again on every visit, and the
+  likely cause is a cached property of the freed class (not confirmed).
+- Nothing is read from an object whose class is still loading or being removed. The live log
+  says so once per class ("skipped reading ... its class is ..."), and the object is looked at
+  again later.
+- After a map load, new characters are left to one pass 3 s later, or 6 s when the map loaded
+  within 30 s of the previous one.
 
 ## Which actors, which character
 
