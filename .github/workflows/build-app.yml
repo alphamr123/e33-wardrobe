@@ -26,12 +26,16 @@ jobs:
       - name: Get retoc 0.1.5
         shell: pwsh
         run: |
+          # downloaded and unpacked outside the checkout: tests/test_docs_index.py indexes every
+          # file git doesn't ignore (v1.3.1's first run failed on retoc_tmp/LICENSE)
           New-Item -ItemType Directory -Force bin | Out-Null
-          Invoke-WebRequest https://github.com/trumank/retoc/releases/download/v0.1.5/retoc_cli-x86_64-pc-windows-msvc.zip -OutFile retoc.zip
-          $hash = (Get-FileHash retoc.zip -Algorithm SHA256).Hash.ToLower()
+          $zip = Join-Path $env:RUNNER_TEMP 'retoc.zip'
+          $tmp = Join-Path $env:RUNNER_TEMP 'retoc_tmp'
+          Invoke-WebRequest https://github.com/trumank/retoc/releases/download/v0.1.5/retoc_cli-x86_64-pc-windows-msvc.zip -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           if ($hash -ne 'cc036b06ad3bdcf7003690b00d82719980c374e48a95bf0654f9959148d263aa') { throw "retoc checksum mismatch: $hash" }
-          Expand-Archive retoc.zip -DestinationPath retoc_tmp
-          Copy-Item (Get-ChildItem retoc_tmp -Recurse -Filter retoc.exe | Select-Object -First 1).FullName bin\retoc.exe
+          Expand-Archive $zip -DestinationPath $tmp
+          Copy-Item (Get-ChildItem $tmp -Recurse -Filter retoc.exe | Select-Object -First 1).FullName bin\retoc.exe
 
       - name: Get 7-Zip (for RAR archives)
         shell: pwsh
