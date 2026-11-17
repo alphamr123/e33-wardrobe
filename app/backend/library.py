@@ -862,7 +862,9 @@ class View:
                     files = sorted({mine[p] for p in common}, key=str.lower)
                     notes.append({'level': 'warn',
                                   'text': f'"{other["name"]}" has {len(files)} of this mod\'s new files '
-                                          f'({names_of(files)}). Two versions of one mod? Keep only one in the library.',
+                                          f'({names_of(files)}). Only one copy of each loads in game. If one mod is '
+                                          'an older download of the other, keep only one in the library; if they are '
+                                          "different mods, one may use the other's copy and look wrong.",
                                   'items': files, 'what': 'files', 'compare': other['name']})
 
         who = ' and '.join(chars_all) if chars_all else ''

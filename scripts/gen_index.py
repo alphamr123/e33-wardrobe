@@ -13,9 +13,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'docs', 'index.md')
 
-# folders that aren't source: build output, user data, generated renders
+# folders that aren't source: build output, user data, generated renders; book/ is a separate
+# MkDocs site with its own nav (the learning book), not part of the tool's docs
 SKIP_DIRS = {'.git', 'dist', 'release', 'bin', 'build_app', 'dist_app', '__pycache__', 'LICENSES', 'node_modules',
-             '.pytest_cache', '--help'}
+             '.pytest_cache', '--help', 'book'}
 SKIP_FILES = {'docs/index.md'}
 EXTS = ('.py', '.lua', '.js', '.html', '.css', '.bat', '.spec', '.yml', '.ini', '.md', '.json', '.txt')
 # files that are data and can't carry a header

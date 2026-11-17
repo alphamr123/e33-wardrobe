@@ -248,6 +248,7 @@ Where the in-game mod is entered from the game (UE4SS registrations).
 | `trace` | `true` |
 | `b_soft` | `"auto"` |
 | `b_swap` | `"off"` |
+| `skin_under` | `true` |
 
 ### Keys (`Scripts/config.lua`, example in `config.example.lua`)
 

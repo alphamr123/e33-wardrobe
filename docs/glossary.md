@@ -25,21 +25,37 @@ all its options.
 **Wear**: put an option's mesh on over whatever outfit the character wears now. **Auto Wear**
 switches Wear on when a pick doesn't fit the worn outfit.
 
-**Skin actor**: the actor the game spawns to show a character's outfit
-(`BP_CharacterSkinBase_<Char>_C` and subclasses; faces `BP_CharacterFaceBase_*`). The visible
-character's `Body` component is the skin actor's `Body`.
+**Skin mod**: an option whose only meshes are base bodies (Placeholder) and whose textures and
+materials are all named for the body or the skin (`Lune_Body_BaseColor`, `body_high_Normal`). A
+costume on the base body that brings other textures too is an outfit, not a skin mod.
+Under the outfit worn (the game's or a mod's) a skin mod gives that outfit the textures it has
+none of its own for ("skin under outfit"); it is not worn over it unless the player presses Wear.
+`skin_under = false` turns this off.
 
-**Copy (scene copy, "Default" copy)**: skin actors the game dresses with the character name
-"Default": copies kept for camp companions, dialogue, cutscenes and battles. Many are hidden. The
-game puts their base body back often; Wear stops after 3 quick resets. `scene_copies = false`
-leaves them alone.
+**Wear record**: what the game had on a body (mesh, and the material on each slot) when Wear put
+a mesh over it; kept per body component and character (`FORCED_FROM`), put back on Unwear. The
+"under it" and "now" lines in live_log.txt show it.
+
+**Skin actor**: the actor the game spawns to show a character's outfit
+(`BP_CharacterSkinBase_<Char>_C` and subclasses; faces `BP_CharacterFaceBase_*`). It has no
+owner. On the walking character (CSAP_SwapAssign) the visible `Body` is the skin actor's `Body`;
+battle, menu, camp and cutscene pawns (CSAP_AssetAssign) copy the outfit onto their own mesh and
+the skin actor is thrown away (book ch 10).
+
+**Copy (scene copy, "Default" copy)**: a character actor other than the walking one (camp,
+dialogue, cutscene, battle or menu pawn) with its own skin component, which the game dresses with
+the character name "Default". Many are hidden. The game puts their base body back often; Wear
+stops after 3 quick resets. `scene_copies = false` leaves them alone.
+
+**Material slot**: a numbered place on a mesh for one material, with a slot name. Not the same
+as a menu **slot** (a row). Indices don't carry over between meshes of one outfit (book ch 8).
 
 **Companion**: `BP_Pawn_AICompanion_<Char>_C`, the party members walking behind the leader. Shows
 the outfit on `CharacterMesh0`. Re-created after battles; found by the 2 s watch.
 
 **Pass**: one run over every skin actor and every actor showing a replaced mesh (`runApply`), after
-a pick, a map load or Fix look. **Re-check**: a look at newly spawned or re-assigned actors about
-1 s and 3 s later (`recheckPending`).
+a pick, a map load or Fix look. **Re-check**: a look at newly spawned actors, or skin actors the
+game shows again (pooled; `SPAWN.linked`), about 1 s and 3 s later (`recheckPending`).
 
 **Look (actor look)**: one `applyToActor` call on one actor. Counted in the `stats` line.
 
@@ -47,7 +63,9 @@ a pick, a map load or Fix look. **Re-check**: a look at newly spawned or re-assi
 
 **Clean**: blood and dirt off the characters (zero masks).
 
-**Placeholder**: `SK_<Char>_Placeholder`, the base body mesh under outfits.
+**Placeholder**: `SK_<Char>_Placeholder`, the base body mesh under outfits. Not to be confused
+with retoc's placeholder `/Engine/UnknownPackage`, which it writes for an import it couldn't
+resolve when converting to legacy (see `--strict-imports`).
 
 **Policy / assign**: `CharacterSkinAssignPolicy`, the game's code that spawns and assigns skins.
 The game uses `AssignBodyAndFaceSkinAsync` (outfit passed as a soft class).
@@ -80,8 +98,8 @@ the last 40 when the game thread stops (`WATCHDOG: last mod step: …`).
 for calm (at most 10 s).
 
 **live_log.txt / report.txt / dump.txt**: the session log (one line per event, read by the app);
-the report written by Ctrl+F9 (settings, selection, logs, dump); the list of characters and
-their components.
+the report written by Ctrl+F9, and also at every game start (settings, selection, logs, the
+latest dump, dated since 1 Nov); the list of characters and their components.
 
 **B (redesign B)**: giving the game the picked variant's own skin Blueprint in its own dressing
 call, so the game dresses everyone itself. `B:` lines in the live log are its probe; `b_swap = param`

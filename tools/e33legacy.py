@@ -55,9 +55,11 @@ def _enc_fstring(s):
 
 
 def split_number(name):
-    """Unreal/retoc FName split: 'T_Body_1' -> ('T_Body', 2); 'T_04' -> ('T_04', 0)."""
+    """Unreal/retoc FName split: 'T_Body_1' -> ('T_Body', 2); 'T_04' -> ('T_04', 0).
+    Like the engine: up to 10 digits, no leading zero, value below 2147483647."""
     left, sep, right = name.rpartition('_')
-    if sep and right.isdigit() and str(int(right)) == right and len(right) < 10:
+    if (sep and right.isascii() and right.isdigit() and str(int(right)) == right and len(right) <= 10
+            and int(right) < 2147483647):
         return left, int(right) + 1
     return name, 0
 
@@ -382,14 +384,16 @@ def _token(seed, length):
     return ('ZW' + body)[:length] if length >= 4 else body[:length]
 
 
-def plan_relocation(packages, variant_id, used=None):
+def plan_relocation(packages, variant_id, used=None, avoid=None):
     """Map each /Game/... package to a unique path of identical length.
 
     The longest directory segment is replaced by a token derived from variant_id, so
     the asset leaf names (and thus object names) stay untouched. `used` (lower-cased
-    paths) should be shared across a whole run so different variants never collide.
+    paths) should be shared across a whole run so different variants never collide;
+    `avoid` (lower-cased, read only) are paths that exist already, such as the game's.
     """
     used = set() if used is None else used
+    avoid = avoid or set()
     mapping = {}
     for pkg in sorted(packages):
         if not pkg.isascii():
@@ -408,7 +412,7 @@ def plan_relocation(packages, variant_id, used=None):
             new = parts[:]
             new[seg] = _token(f'{variant_id}|{parts[seg]}|{seg}|{salt}', len(parts[seg]))
             newpkg = '/'.join(new)
-            if newpkg.lower() not in used and newpkg.lower() != pkg.lower():
+            if newpkg.lower() not in used and newpkg.lower() not in avoid and newpkg.lower() != pkg.lower():
                 break
         else:
             raise LegacyError(f'{pkg}: could not find a free relocation path')

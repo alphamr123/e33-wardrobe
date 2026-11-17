@@ -994,6 +994,11 @@ class Monitor:
         key = 'watchdog-idle' if idle else 'watchdog-work'
         self._wd_key = key
         p = self.problems.get(key)
+        if p and p['_v'].get('resumed') and p['_v'].get('since') != since:
+            # the earlier stall went on by itself (a load, usually): it becomes its own item, so a
+            # freeze after it isn't read as "x2, normal during a loading screen" (book ch 19)
+            self._park_resumed(self.problems.pop(key))
+            p = None
         if p and p['_v'].get('since') == since and since:
             p['last'] = _hms(dt)            # the same stall, still going: not another one
             self._add_lines(p)
@@ -1004,12 +1009,18 @@ class Monitor:
             p['_v']['since'] = since
         if secs >= p['_v']['max']:
             p['_v']['max'] = secs
-            if idle:
+            if idle and secs < 30:
                 p['detail'] = ('The menu was idle, so the pause came from the game itself. '
-                               'During a loading screen this is normal.')
+                               'Loading screens do this.')
                 p['hint'] = 'Nothing to do if it was a loading screen. If the game froze, send report.txt.'
+            elif idle:
+                # PC 15 Oct 01:55: a 141 s freeze read "normal during a loading screen" (book ch 19)
+                p['detail'] = ('The menu was idle, so the pause came from the game itself. '
+                               'It is longer than most loading screens.')
+                p['hint'] = 'If the game froze: close it, start it once and send report.txt.'
             else:
-                step = f' Its last step: {_short(self._last_step, 140)}.' if self._last_step else ''
+                # the last change the menu logged; the breadcrumb line adds the call it was making
+                step = f' The last thing it logged: {_short(self._last_step, 140)}.' if self._last_step else ''
                 p['detail'] = f'It happened while the menu was working ({state}).{step}'
                 p['hint'] = 'If the game is frozen: close it, start it once and send report.txt.'
         mx = p['_v']['max']
@@ -1026,6 +1037,7 @@ class Monitor:
             return True
         secs = int(m.group('s'))
         p['title'] = f'The game paused for {secs} s, then went on'
+        p['_v']['resumed'], p['_v']['went'] = True, secs
         self._add_lines(p)
         if p['key'] == 'watchdog-idle':
             p['level'] = 'info'
@@ -1033,6 +1045,23 @@ class Monitor:
                            'Loading screens do this.')
             p['hint'] = 'Nothing to do.'
         return True
+
+    def _park_resumed(self, p):
+        """Stalls that ended by themselves, one item per kind: how many, and the longest."""
+        key = p['key'] + '-went-on'
+        q = self.problems.get(key)
+        if q is None:
+            q = dict(p, key=key, _lines=list(p.get('_lines', [])))
+            q['_v'] = _Vars(max=p['_v'].get('went') or p['_v'].get('max') or 0)
+            self.problems[key] = q
+        else:
+            q['count'] += p['count']
+            q['last'] = p['last']
+            q['_v']['max'] = max(q['_v']['max'], p['_v'].get('went') or p['_v'].get('max') or 0)
+            q['_lines'] = (q.get('_lines', []) + p.get('_lines', []))[-MAX_PROBLEM_LINES:]
+        n = q['count']
+        q['title'] = (f'The game paused {n} times, then went on (longest {q["_v"]["max"]} s)' if n > 1
+                      else f'The game paused for {q["_v"]["max"]} s, then went on')
 
     def _watchdog_step(self, m, text, src, dt):
         # the in-game menu's breadcrumb: the engine call it was making when the game stopped

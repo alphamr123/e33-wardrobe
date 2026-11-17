@@ -8,7 +8,8 @@ costs roughly microseconds, property reads by name the most.
 Scenarios (one Lua state, in order):
   a  first look at a new Sciel skin copy, Wear on (mesh swap to the relocated Chic mesh)
   b  second look (round 2, 2 s later), nothing changed
-  c  the game re-dressed the copy (policy hook) -> first re-check round
+  c  the game put its own body back and showed the copy again (the skin component's
+     OnSkinAssignCompleted, as for a pooled skin) -> the copy is dressed again
   d  map load: 20 new copies + a companion pawn spawn in the quiet period, then the map-load pass
      (+ 300 other skeletal mesh components in the world)
   e  the 2 s companion watch, nothing changed
@@ -90,7 +91,7 @@ if '--funcs' in sys.argv:
 # a) a new Sciel copy: BeginPlay, first look 1 s later (round 1)
 G.TRACING = True
 G.resetTrace()
-a, body, owner = G.makeSciel(1)
+a, body, owner, skin_comp = G.makeSciel(1)
 G.ACTORS[len(G.ACTORS) + 1] = a
 G.BEGINPLAY(a)
 G.tickGT(25)
@@ -99,10 +100,16 @@ summary('first look at a new skin copy, Wear mesh swap', 'a')
 G.resetTrace()
 G.tickGT(45)
 summary('second look (round 2), nothing changed', 'b')
-# c) the game puts its own body back; policy hook -> re-check round 1
+# c) the game puts its own body back and shows the same copy again (a pooled skin, no BeginPlay):
+# the policy call, then the skin component's handler with the copy -> the mod dresses it again
 L.execute('local b = ...; b._mesh = PLACEHOLDER; for k in pairs(b._over) do b._over[k] = nil end', body)
 G.resetTrace()
 run_hook('AssignBodySkin', owner, 'Default')
+COMP_HOOK = G.HOOKS['/Game/Gameplay/CharacterCustomization/Blueprints/BP_CharacterSkinComponent'
+                    '.BP_CharacterSkinComponent_C:OnSkinAssignCompleted']
+if COMP_HOOK is None:
+    sys.exit('the skin component hook was not registered (main.lua SPAWN.hookComponent)')
+L.eval('function(h, c, b) ExecuteInGameThread(function() h(c, b, nil) end) end')(COMP_HOOK, skin_comp, a)
 G.tickGT(25)
 summary('re-dress after the game reset the mesh (round 1)', 'c')
 G.TRACING = False
@@ -117,7 +124,7 @@ G.TRACING = True
 G.resetTrace()
 G.MAP_POST(None, None)
 for i in range(20):
-    a2, b2, o2 = G.makeSciel(100 + i)
+    a2, b2, o2, _sc = G.makeSciel(100 + i)
     G.ACTORS[len(G.ACTORS) + 1] = a2
     G.BEGINPLAY(a2)
 comp, cm = G.makeCompanion(1)

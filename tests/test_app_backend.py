@@ -208,9 +208,9 @@ def test_names():
           [L.option_label('843_Clea - Shorter Skirt.', 'Clea'), L.option_label('843 - Clea (No Thights)', 'Clea')])
     check('texture size labels', [L.size_label(x) for x in (4096, 2048, 1024, 512, 0)] == ['4K', '2K', '1K', '512 px', ''])
     check('CamelCase folder names as words; other names stay', L.humanize('LuneFelineSorceressBarefoot')
-          == 'Lune Feline Sorceress Barefoot' and L.humanize('SemiNude') == 'Semi Nude' and L.humanize('Clea') == 'Clea'
+          == 'Lune Feline Sorceress Barefoot' and L.humanize('SemiFormal') == 'Semi Formal' and L.humanize('Clea') == 'Clea'
           and L.humanize('only Lune mod fix') == 'only Lune mod fix' and L.humanize('BTLS') == 'BTLS'
-          and L.humanize('Lace_dress') == 'Lace_dress', [L.humanize('LuneFelineSorceressBarefoot'), L.humanize('SemiNude')])
+          and L.humanize('Lace_dress') == 'Lace_dress', [L.humanize('LuneFelineSorceressBarefoot'), L.humanize('SemiFormal')])
     check('Replaces for the base body: shared words of several options, never the mod name or one folder name',
           L.base_body_name(['840 Expedition 1 (Crop Top)', '840 Expedition 2'], 'Lune Outfit Options') == 'Expedition'
           and L.base_body_name(['Fitting Outfits - Lune'], 'Fitting Outfits - Lune') == 'Base body'

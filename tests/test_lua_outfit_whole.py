@@ -76,7 +76,7 @@ asset("SkeletalMesh", "/Game/Characters/ZWGREY3/Body/SK_Lune_Bikini_D_Skin", "SK
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod.MI_Bikini_Mod"), MaterialSlotName = FName("Bikini") },
                          { MaterialSlotName = FName("Body") },
                          { MaterialSlotName = FName("Extra") } }) })
-asset("Texture2D", "/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude", "T_Chic_D-nude")
+asset("Texture2D", "/Game/Characters/ZWGREY3/Chic/T_Chic_D-alt", "T_Chic_D-alt")
 -- PC 17 Oct: Sciel's Chic outfit is a Lune mesh, so "the body's skin material" was Lune's; the
 -- game's own version of the mod's mesh has the character's skin material, whose textures the mod
 -- replaces (body_other_D -> body_other_D-alt)
@@ -99,10 +99,91 @@ asset("SkeletalMesh", "/Game/Characters/ZWGREY4/Body/SK_Lune_Bikini_E_Skin", "SK
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY4/Body/MI_Body_Mod4.MI_Body_Mod4") } }) })
 asset("Texture2D", "/Game/Characters/ZWGREY4/Chic/T_Chic_D-mod", "T_Chic_D-mod")
 asset("Texture2D", "/Game/Characters/ZWGREY4/Body/T_Picked", "T_Picked")
+-- the body's own texture and skin material; an outfit for Chic whose skin shows them; a skin mod's
+-- base body and its version of the body texture; an outfit's own version
+asset("Texture2D", "/Game/Characters/Lune/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor")
+asset("Texture2D", "/Game/Characters/ZWSKIN/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor")
+asset("Texture2D", "/Game/Characters/ZWOWN/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor")
+asset("MaterialInstanceConstant", "/Game/Characters/Lune/Body/MI_Body_Lune", "MI_Body_Lune",
+  { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("BaseColor") },
+      ParameterValue = get("/Game/Characters/Lune/Body/Lune_Body_BaseColor.Lune_Body_BaseColor") } }) })
+asset("SkeletalMesh", "/Game/Characters/ZWCOMP/Chic/SK_Lune_Chic", "SK_Lune_Chic",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune") } }) })
+asset("SkeletalMesh", "/Game/Characters/ZWSKIN/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune") } }) })
+-- PC 17 Nov: the game's first outfit of a character (three slots here: skin, coat, and one the
+-- game ships without a material, as its own meshes have), and a skin Blueprint whose Body template
+-- names that mesh
+asset("MaterialInstanceConstant", "/Game/Characters/Lune/Base/MI_Base_Coat", "MI_Base_Coat", { TextureParameterValues = TArray({}) })
+asset("SkeletalMesh", "/Game/Characters/Lune/Base/SK_Lune_Base", "SK_Lune_Base",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune"), MaterialSlotName = FName("Skin") },
+                         { MaterialInterface = get("/Game/Characters/Lune/Base/MI_Base_Coat.MI_Base_Coat"), MaterialSlotName = FName("Coat") },
+                         { MaterialSlotName = FName("lambert1") } }) })
+function BASE_OUTFIT()
+  ACTORS[1].Body._mesh = get("/Game/Characters/Lune/Base/SK_Lune_Base.SK_Lune_Base")
+  local t = meshComp("Body_GEN_VARIABLE", get("/Game/Characters/Lune/Base/SK_Lune_Base.SK_Lune_Base"))
+  t._p.OverrideMaterials = TArray({})
+  REGSET("/Game/Characters/Lune/BP_Lune_Skin_Chic.BP_Lune_Skin_Chic_C:Body_GEN_VARIABLE", t)
+end
+function SLOTS3()                 -- what the body's three slots show: the material, or its parent for an instance
+  local b, out = ACTORS[1].Body, {}
+  for i = 0, 2 do
+    local m = b:GetMaterial(i)
+    out[#out + 1] = m and ((m._p.Parent and ("instance of " .. m._p.Parent._path)) or m._path) or "empty"
+  end
+  return table.concat(out, " | ")
+end
+-- the walking character's body is ONE component for the whole party: the game puts each leader's
+-- outfit on it. Sciel's outfit actor shares Lune's body component here.
+asset("SkeletalMesh", "/Game/Characters/Sciel/Base/SK_Sciel_Base", "SK_Sciel_Base",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic") } }) })
+asset("SkeletalMesh", "/Game/Characters/ZWZ/Skin/SK_Sciel_Worn", "SK_Sciel_Worn",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic") } }) })
+function PARTY()
+  LUNE = ACTORS[1]
+  local body = LUNE.Body
+  SCIEL = new("BP_Sciel_Skin_C", "/Game/Map.PersistentLevel.BP_Sciel_Skin_C_1", { Body = body },
+    { K2_GetComponentsByClass = function() return TArray({ body }) end })
+  SCIEL._class = new("BlueprintGeneratedClass", "/Game/Characters/Sciel/BP_Sciel_Skin.BP_Sciel_Skin_C")
+  SCIEL._class._super = LUNE._class._super
+  SCIEL._skin = "BP_CharacterSkinBase_C"
+end
+function LEAD(a, meshFull)        -- the game shows that character's outfit on the shared body
+  ACTORS[1] = a
+  a.Body._mesh = get(meshFull)
+  for i = 0, 5 do a.Body:SetMaterial(i, nil) end
+end
+-- a second character whose body uses a texture that a Lune pick also brings (and Lune doesn't use)
+asset("Texture2D", "/Game/Characters/Lune/Body/Lune_Belt_BaseColor", "Lune_Belt_BaseColor")
+asset("MaterialInstanceConstant", "/Game/Characters/Sciel/Base/MI_Sciel_Belt", "MI_Sciel_Belt",
+  { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("BaseColor") },
+      ParameterValue = get("/Game/Characters/Lune/Body/Lune_Belt_BaseColor.Lune_Belt_BaseColor") } }) })
+asset("SkeletalMesh", "/Game/Characters/Sciel/Base/SK_Sciel_Belted", "SK_Sciel_Belted",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Sciel/Base/MI_Sciel_Belt.MI_Sciel_Belt") } }) })
+function ADD_SCIEL_BELTED()
+  local b = meshComp("Body", get("/Game/Characters/Sciel/Base/SK_Sciel_Belted.SK_Sciel_Belted"))
+  b._path = "/Game/Map.PersistentLevel.BP_Sciel_Skin_C_2.Body"
+  local a = new("BP_Sciel_Skin_C", "/Game/Map.PersistentLevel.BP_Sciel_Skin_C_2", { Body = b },
+    { K2_GetComponentsByClass = function() return TArray({ b }) end })
+  a._class = new("BlueprintGeneratedClass", "/Game/Characters/Sciel/BP_Sciel_Skin.BP_Sciel_Skin_C")
+  a._class._super = ACTORS[1]._class._super
+  a._skin = "BP_CharacterSkinBase_C"
+  table.insert(ACTORS, a)
+end
 asset("SkeletalMesh", "/Game/Characters/ZWGREY5/Body/SK_Lune_Bikini_F_Skin", "SK_Lune_Bikini_F_Skin",
   { Materials = TArray({ { MaterialInterface = get("/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod.MI_Bikini_Mod"), MaterialSlotName = FName("Bikini") },
                          { MaterialSlotName = FName("Body") },
                          { MaterialSlotName = FName("Extra") } }) })
+-- PC 17 Nov, rerun: a mod's version of the game's first outfit mesh with a material on the slot
+-- the game ships empty (a skin mod for Sciel: the scarf material on her lambert1)
+asset("SkeletalMesh", "/Game/Characters/ZWEMPTY/Base/SK_Lune_Base", "SK_Lune_Base",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune"), MaterialSlotName = FName("Skin") },
+                         { MaterialInterface = get("/Game/Characters/Lune/Base/MI_Base_Coat.MI_Base_Coat"), MaterialSlotName = FName("Coat") },
+                         { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic"), MaterialSlotName = FName("lambert1") } }) })
+-- an outfit option made for the base body whose mesh shows the body's skin material (PC: Lune
+-- Outfit Options)
+asset("SkeletalMesh", "/Game/Characters/ZWOPT/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder",
+  { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune") } }) })
 '''
 
 VARIANTS = r'''return {
@@ -141,7 +222,7 @@ VARIANTS = r'''return {
       { id = "G3/a", label = "A", map = {
         ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_D_Skin"] = { "/Game/Characters/ZWGREY3/Body/SK_Lune_Bikini_D_Skin", "SK_Lune_Bikini_D_Skin", "SkeletalMesh" },
         ["/Game/Characters/Lune/Bikini/MI_Bikini_Mod"] = { "/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod", "MI_Bikini_Mod", "MaterialInstanceConstant" },
-        ["/Game/Characters/Lune/Chic/T_Chic_D-nude"] = { "/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude", "T_Chic_D-nude", "Texture2D" } } } } } } },
+        ["/Game/Characters/Lune/Chic/T_Chic_D-alt"] = { "/Game/Characters/ZWGREY3/Chic/T_Chic_D-alt", "T_Chic_D-alt", "Texture2D" } } } } } } },
   { mod = "Grey4", slots = {
     { id = "G4/main", label = "Grey4: Lune outfit", character = "Lune", variants = {
       { id = "G4/a", label = "A", map = {
@@ -169,6 +250,65 @@ VARIANTS = r'''return {
       { id = "K/a", label = "Main", map = {
         ["/Game/Characters/Maelle/Body/SK_Maelle_Placeholder"] = { "/Game/Characters/ZWMAEL/Body/SK_Maelle_Placeholder", "SK_Maelle_Placeholder", "SkeletalMesh" },
         ["/Game/Characters/Lune/Body/SK_Lune_Placeholder"] = { "/Game/Characters/ZWLIGHT/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder", "SkeletalMesh" } } } } } } },
+  -- an outfit built on someone else's skin textures: its mesh replaces Chic, its material shows the
+  -- game's body texture, and it brings no body texture of its own (the player adds a skin mod)
+  { mod = "Composite", slots = {
+    { id = "X/main", label = "Composite: Lune outfit", character = "Lune", variants = {
+      { id = "X/a", label = "A", map = {
+        ["/Game/Characters/Lune/Chic/SK_Lune_Chic"] = { "/Game/Characters/ZWCOMP/Chic/SK_Lune_Chic", "SK_Lune_Chic", "SkeletalMesh" } } } } } } },
+  -- a skin mod (PC: two such mods): a base body and the body's textures, nothing else
+  { mod = "Skin Light", slots = {
+    { id = "Y/main", label = "Skin Light: Lune", character = "Lune", variants = {
+      { id = "Y/a", label = "A", map = {
+        ["/Game/Characters/Lune/Body/SK_Lune_Placeholder"] = { "/Game/Characters/ZWSKIN/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/Lune_Body_BaseColor"] = { "/Game/Characters/ZWSKIN/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor", "Texture2D" } } } } } } },
+  -- the same outfit with a body texture of its own
+  { mod = "Own", slots = {
+    { id = "W/main", label = "Own: Lune outfit", character = "Lune", variants = {
+      { id = "W/a", label = "A", map = {
+        ["/Game/Characters/Lune/Chic/SK_Lune_Chic"] = { "/Game/Characters/ZWCOMP/Chic/SK_Lune_Chic", "SK_Lune_Chic", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/Lune_Body_BaseColor"] = { "/Game/Characters/ZWOWN/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor", "Texture2D" } } } } } } },
+  -- a costume built on the base body (PC library: three such mods): it brings the body texture AND
+  -- a belt texture, so it is an outfit, not a skin mod
+  { mod = "Cat", slots = {
+    { id = "C2/main", label = "Cat: Lune costume", character = "Lune", variants = {
+      { id = "C2/a", label = "A", map = {
+        ["/Game/Characters/Lune/Body/SK_Lune_Placeholder"] = { "/Game/Characters/ZWLIGHT/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/Lune_Body_BaseColor"] = { "/Game/Characters/ZWSKIN/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor", "Texture2D" },
+        ["/Game/Characters/Lune/Body/Lune_Belt_BaseColor"] = { "/Game/Characters/ZWCAT/Body/Lune_Belt_BaseColor", "Lune_Belt_BaseColor", "Texture2D" } } } } } } },
+  -- an outfit made for another outfit that also changes the body texture: not a skin mod
+  { mod = "Swim", slots = {
+    { id = "S/main", label = "Swim: Lune outfit", character = "Lune", variants = {
+      { id = "S/a", label = "A", map = {
+        ["/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_C_Skin"] = { "/Game/Characters/ZWGREY2/Body/SK_Lune_Bikini_C_Skin", "SK_Lune_Bikini_C_Skin", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/Lune_Body_BaseColor"] = { "/Game/Characters/ZWSKIN/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor", "Texture2D" } } } } } } },
+  -- an outfit for Sciel, made for an outfit she isn't wearing
+  { mod = "Zed", slots = {
+    { id = "Z/main", label = "Zed: Sciel outfit", character = "Sciel", variants = {
+      { id = "Z/a", label = "A", map = {
+        ["/Game/Characters/Sciel/Customization/Skin/SK_Sciel_Worn"] = { "/Game/Characters/ZWZ/Skin/SK_Sciel_Worn", "SK_Sciel_Worn", "SkeletalMesh" } } } } } } },
+  -- a Blueprint-only fix option (PC: Cheekier Chic "_only Separate colors_P"): the outfit's own
+  -- Blueprint, whose Body uses another of the game's meshes and sets one of the option's materials
+  { mod = "BpFix", slots = {
+    { id = "P/main", label = "BpFix: Lune fix", character = "Lune", variants = {
+      { id = "P/a", label = "A", map = {
+        ["/Game/Characters/Lune/BP_Lune_Skin_Chic"] = { "/Game/Characters/ZWBPFIX/BP_Lune_Skin_Chic", "BP_Lune_Skin_Chic_C", "BlueprintGeneratedClass" },
+        ["/Game/Characters/Lune/Base/MI_Base_Coat"] = { "/Game/Characters/ZWBPFIX/MI_Base_Coat", "MI_Base_Coat", "MaterialInstanceConstant" } } } } } } },
+  -- a mod that replaces the game's first outfit mesh itself (PC: a skin mod for Sciel)
+  { mod = "Empty", slots = {
+    { id = "E/main", label = "Empty: Lune base", character = "Lune", variants = {
+      { id = "E/a", label = "A", map = {
+        ["/Game/Characters/Lune/Base/SK_Lune_Base"] = { "/Game/Characters/ZWEMPTY/Base/SK_Lune_Base", "SK_Lune_Base", "SkeletalMesh" } } } } } } },
+  -- an outfit option for the base body, no body texture of its own (PC: Lune Outfit Options)
+  { mod = "Options", slots = {
+    { id = "Q/main", label = "Options: Lune outfit", character = "Lune", variants = {
+      { id = "Q/a", label = "A", map = {
+        ["/Game/Characters/Lune/Body/SK_Lune_Placeholder"] = { "/Game/Characters/ZWOPT/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder", "SkeletalMesh" } } } } } } },
+  -- an outfit for Chic whose mesh can't be loaded (its pak is missing): the game's Chic stays on
+  { mod = "Broken", slots = {
+    { id = "N/main", label = "Broken: Lune outfit", character = "Lune", variants = {
+      { id = "N/a", label = "A", map = {
+        ["/Game/Characters/Lune/Chic/SK_Lune_Chic"] = { "/Game/Characters/ZWMISSING/Chic/SK_Lune_Chic", "SK_Lune_Chic", "SkeletalMesh" } } } } } } },
 }
 '''
 
@@ -176,6 +316,9 @@ CHIC = '/Game/Characters/Lune/Chic/SK_Lune_Chic.SK_Lune_Chic'
 TEX_VANILLA = '/Game/Characters/Lune/Chic/T_Chic_D.T_Chic_D'
 TEX_MOD = '/Game/Characters/ZWCOLOR01/Chic/T_Chic_D.T_Chic_D'
 TEX_OUTFIT = '/Game/Characters/ZWOUTTEX/Chic/T_Chic_D.T_Chic_D'
+BODY_GAME = '/Game/Characters/Lune/Body/Lune_Body_BaseColor.Lune_Body_BaseColor'
+BODY_SKIN = '/Game/Characters/ZWSKIN/Body/Lune_Body_BaseColor.Lune_Body_BaseColor'
+BODY_OWN = '/Game/Characters/ZWOWN/Body/Lune_Body_BaseColor.Lune_Body_BaseColor'
 
 
 RUNTIMES = []                   # every Lua state made, for the access-violation check at the end
@@ -373,9 +516,12 @@ def main():
           'named like the old one (T_Chic_D -> T_Chic_D-mod), not grey',
           mesh().startswith('/Game/Characters/ZWGREY/') and tex() == '/Game/Characters/ZWGREY/Chic/T_Chic_D-mod.T_Chic_D-mod'
           and "(the mod's own texture for it)" in live, (mesh(), tex(), [l for l in live.splitlines() if 'empty' in l][:2]))
+    grey = [l for l in live.splitlines() if 'on screen: Grey: Lune outfit' in l]
+    check('  the texture put into the empty link counts as on screen in that same pass (2/2, not "not used")',
+          grey and ': 2/2 asset(s)' in grey[-1] and 'not used' not in grey[-1], grey[-1:])
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
 
-    # ---- the same, but the mod's texture has another name (PC: Sciel's Cheeki body, body_high_BaseColor-nude)
+    # ---- the same, but the mod's texture has another name (PC: Sciel's Cheeki body, body_high_BaseColor-<suffix>)
     tmp, mod, L, G, W, mesh, tex = run('')
     gi = [x.id for x in W.slots().values()].index('G2/main') + 1
     W.setVariant(gi, 1)
@@ -405,8 +551,8 @@ def main():
     s0, s1, s2 = slot(body, 0), slot(body, 1), slot(body, 2)
     check('an empty slot of a worn mod mesh gets the body\'s material from the slot of the same name, not grey',
           mesh().startswith('/Game/Characters/ZWGREY3/') and s1.startswith('/Game/Characters/Lune/Chic/MI_Chic'), (mesh(), s1))
-    check('  with the mod\'s own texture named like the one it showed (T_Chic_D -> T_Chic_D-nude)',
-          s1.endswith('/Game/Characters/ZWGREY3/Chic/T_Chic_D-nude.T_Chic_D-nude'), s1)
+    check('  with the mod\'s own texture named like the one it showed (T_Chic_D -> T_Chic_D-alt)',
+          s1.endswith('/Game/Characters/ZWGREY3/Chic/T_Chic_D-alt.T_Chic_D-alt'), s1)
     check('  a slot with no match gets the skin material; the mod\'s own material stays',
           s2.startswith('/Game/Characters/Lune/Chic/MI_Chic') and s0.startswith('/Game/Characters/ZWGREY3/Body/MI_Bikini_Mod'), (s0, s2))
     check('  the live log says what filled each slot', "mat1 empty (the mod's mesh has no material for slot body)" in live
@@ -472,6 +618,640 @@ def main():
           and '{fix:mat|G5/a|/game/characters/lune/customization/skin/sk_lune_bikini_f_skin|2|extra}' in live,
           [x for x in live.splitlines() if 'fix:mat' in x][:3])
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
+
+    # ---- an outfit built on someone else's skin textures, plus a skin mod (a base body with the
+    # body's textures and nothing else). Nexus comment, Nov 2026: "either the skin texture or the
+    # outfit". PC 17 Oct: the skin mod showed 0 of 3 pieces under an outfit, then Auto Wear put its
+    # bare body on in place of the outfit.
+    tmp, mod, L, G, W, mesh, tex = run('')                       # Auto Wear on, as players have it
+    sl = list(W.slots().values())
+    ids = [x.id for x in sl]
+    xi, yi = ids.index('X/main') + 1, ids.index('Y/main') + 1
+    W.setVariant(xi, 1)                                          # the outfit, made for Chic
+    G.settle()
+    G.tickGT(40)
+    check('(an outfit without a body texture of its own shows the game\'s)',
+          mesh().startswith('/Game/Characters/ZWCOMP/') and tex() == BODY_GAME, (mesh(), tex()))
+    W.setVariant(yi, 1)                                          # the skin mod
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('a skin mod picked with a mod outfit gives the outfit its skin texture',
+          mesh().startswith('/Game/Characters/ZWCOMP/') and tex() == BODY_SKIN, (mesh(), tex()))
+    check('  Auto Wear leaves the outfit on (the skin mod is in use under it), and the log says so',
+          not W.isWear('Y/main') and 'skin under outfit: Skin Light: Lune shows under what Lune wears' in live
+          and "Auto Wear: Skin Light: Lune doesn't fit" not in live, [x for x in live.splitlines() if 'Wear' in x][-3:])
+    check('  the menu: on, shown as the skin under the outfit, its own mesh not shown (Wear stays possible)',
+          W.slotState(yi) == 'on' and W.asSkin(sl[yi - 1]) is True and W.meshShown(sl[yi - 1]) is False
+          and W.meshShown(sl[xi - 1]) is True and not W.asSkin(sl[xi - 1]),
+          (W.slotState(yi), W.asSkin(sl[yi - 1]), W.meshShown(sl[yi - 1]), W.meshShown(sl[xi - 1])))
+    W.setWear('Y/main', True)
+    G.settle()
+    check('  Wear still puts the skin mod\'s own body on in place of the outfit',
+          mesh().startswith('/Game/Characters/ZWSKIN/') and tex() == BODY_SKIN and not W.asSkin(sl[yi - 1]), (mesh(), tex()))
+    W.setWear('Y/main', False)
+    G.settle()
+    check('  Unwear: the outfit again, still with the skin mod\'s texture',
+          mesh().startswith('/Game/Characters/ZWCOMP/') and tex() == BODY_SKIN, (mesh(), tex()))
+    W.setVariant(xi, 0)                                          # the outfit off: Lune wears the game's Chic
+    G.settle()
+    G.tickGT(40)
+    check('  the outfit off: the game\'s Chic again, and the skin mod is not worn over it by itself',
+          mesh() == CHIC and tex() == TEX_VANILLA and not W.isWear('Y/main') and not W.asSkin(sl[yi - 1]), (mesh(), tex()))
+    shutil.rmtree(tmp, ignore_errors=True)
+    # the other order, and an outfit that brings its own body texture (PC session 7): it keeps it,
+    # the skin mod lends nothing, so Auto Wear puts the skin mod's body on as before
+    tmp, mod, L, G, W, mesh, tex = run('')
+    sl = list(W.slots().values())
+    ids = [x.id for x in sl]
+    xi, yi, wi = (ids.index(k) + 1 for k in ('X/main', 'Y/main', 'W/main'))
+    W.setVariant(yi, 1)                                          # the skin mod first: Lune wears Chic
+    G.settle()
+    G.tickGT(40)
+    check('a skin mod picked while the game\'s outfit is worn: Auto Wear puts its body on, as before',
+          W.isWear('Y/main') and mesh().startswith('/Game/Characters/ZWSKIN/'), mesh())
+    W.setWear('Y/main', False)
+    G.settle()
+    W.setVariant(xi, 1)                                          # then the outfit
+    G.settle()
+    G.tickGT(40)
+    check('  Unwear, then the mod outfit picked: the outfit with the skin mod\'s texture, nothing worn over it',
+          mesh().startswith('/Game/Characters/ZWCOMP/') and tex() == BODY_SKIN and not W.isWear('Y/main')
+          and not W.isWear('X/main'), (mesh(), tex()))
+    W.setVariant(xi, 0)
+    W.setVariant(yi, 0)
+    G.settle()
+    W.setVariant(wi, 1)                                          # an outfit with its own body texture
+    G.settle()
+    own = (mesh(), tex())
+    W.setVariant(yi, 1)
+    G.settle()
+    G.tickGT(40)
+    check('an outfit that brings its own body texture keeps it, and the skin mod, lending nothing, is worn instead',
+          own[0].startswith('/Game/Characters/ZWCOMP/') and own[1] == BODY_OWN and W.isWear('Y/main')
+          and not W.asSkin(sl[yi - 1]) and mesh().startswith('/Game/Characters/ZWSKIN/'),
+          (own, W.isWear('Y/main'), mesh(), tex()))
+    shutil.rmtree(tmp, ignore_errors=True)
+    # a costume built on the base body (PC library: one brings Lune_Belt_* next to Lune_Body_*) is an
+    # outfit, not a skin mod: its body texture stays off the outfit worn, and Auto Wear puts it on
+    tmp, mod, L, G, W, mesh, tex = run('')
+    sl = list(W.slots().values())
+    ids = [x.id for x in sl]
+    xi, ci = ids.index('X/main') + 1, ids.index('C2/main') + 1
+    W.setVariant(xi, 1)
+    G.settle()
+    G.tickGT(40)
+    W.setVariant(ci, 1)
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('a costume for the base body that also brings other textures is worn in place of the outfit, as before',
+          W.isWear('C2/main') and mesh().startswith('/Game/Characters/ZWLIGHT/') and 'skin under outfit' not in live
+          and "Auto Wear: Cat: Lune costume doesn't fit" in live, (W.isWear('C2/main'), mesh()))
+    shutil.rmtree(tmp, ignore_errors=True)
+    # the game's own outfits take a skin mod's textures too ("skin_under", on by default: what the
+    # skin mod does when installed as a replacer); an outfit made for another outfit lends nothing
+    BODY_MAT = 'function() ACTORS[1].Body:SetMaterial(0, get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune")) end'
+    tmp, mod, L, G, W, mesh, tex = run('')
+    sl = list(W.slots().values())
+    ids = [x.id for x in sl]
+    xi, yi, si = (ids.index(k) + 1 for k in ('X/main', 'Y/main', 'S/main'))
+    W.setVariant(xi, 1)
+    G.settle()
+    W.setVariant(si, 1)                                          # an outfit made for the Bikini outfit
+    G.settle()
+    W.setWear('S/main', False)                                   # (Auto Wear put it on: take it off again)
+    G.settle()
+    check('an outfit made for another outfit lends nothing to the outfit worn (only a skin mod does)',
+          mesh().startswith('/Game/Characters/ZWCOMP/') and tex() == BODY_GAME and W.slotState(si) == 'unused',
+          (mesh(), tex(), W.slotState(si)))
+    W.setVariant(si, 0)
+    W.setVariant(xi, 0)
+    G.settle()
+    L.eval(BODY_MAT)()                                           # the game's Chic, showing the body's skin material
+    W.setVariant(yi, 1)                                          # the skin mod
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('a skin mod picked while the game\'s own outfit is worn: its texture goes under that outfit',
+          mesh() == CHIC and tex() == BODY_SKIN and W.slotState(yi) == 'on', (mesh(), tex(), W.slotState(yi)))
+    check('  Auto Wear leaves the outfit on; Wear stays possible',
+          not W.isWear('Y/main') and W.asSkin(sl[yi - 1]) is True and W.meshShown(sl[yi - 1]) is False
+          and 'skin under outfit: Skin Light: Lune shows under what Lune wears' in live,
+          (W.isWear('Y/main'), W.asSkin(sl[yi - 1]), W.meshShown(sl[yi - 1])))
+    W.setWear('Y/main', True)
+    G.settle()
+    check('  Wear: the skin mod\'s own body in place of the game\'s outfit', mesh().startswith('/Game/Characters/ZWSKIN/')
+          and not W.asSkin(sl[yi - 1]), mesh())
+    W.setWear('Y/main', False)
+    G.settle()
+    W.setVariant(yi, 0)
+    G.settle()
+    check('  the skin mod off: the game\'s body texture again', mesh() == CHIC and tex() == BODY_GAME, (mesh(), tex()))
+    shutil.rmtree(tmp, ignore_errors=True)
+    # a skin mod whose own mesh is the outfit worn (the game's base body): it shows as itself, and
+    # is not called "the skin under the outfit"
+    tmp, mod, L, G, W, mesh, tex = run('')
+    sl = list(W.slots().values())
+    yi = [x.id for x in sl].index('Y/main') + 1
+    L.execute('ACTORS[1].Body._mesh = get("/Game/Characters/Lune/Body/SK_Lune_Placeholder.SK_Lune_Placeholder")')
+    W.setVariant(yi, 1)
+    G.settle()
+    G.tickGT(40)
+    check('a skin mod made for the outfit worn (the base body): its own body shows, not "skin under outfit"',
+          mesh().startswith('/Game/Characters/ZWSKIN/') and W.meshShown(sl[yi - 1]) is True
+          and not W.asSkin(sl[yi - 1]) and not W.isWear('Y/main'),
+          (mesh(), W.meshShown(sl[yi - 1]), W.asSkin(sl[yi - 1]), W.isWear('Y/main')))
+    shutil.rmtree(tmp, ignore_errors=True)
+    # skin_under = false (settings.txt, or Settings > Skin mods): as 1.3.1, a skin mod gives nothing to
+    # any outfit and Auto Wear puts its own body on
+    tmp, mod, L, G, W, mesh, tex = run('skin_under = false\nauto_wear = false\n')
+    sl = list(W.slots().values())
+    ids = [x.id for x in sl]
+    xi, yi = ids.index('X/main') + 1, ids.index('Y/main') + 1
+    W.setVariant(xi, 1)
+    G.settle()
+    W.setVariant(yi, 1)
+    G.settle()
+    check('skin_under off: a skin mod gives nothing to the mod outfit worn',
+          mesh().startswith('/Game/Characters/ZWCOMP/') and tex() == BODY_GAME and W.slotState(yi) == 'unused'
+          and not W.asSkin(sl[yi - 1]), (mesh(), tex(), W.slotState(yi)))
+    W.setVariant(xi, 0)
+    G.settle()
+    L.eval(BODY_MAT)()
+    G.settle()
+    W.setVariant(yi, 0)
+    W.setVariant(yi, 1)
+    G.settle()
+    check('  nor to the game\'s own outfit', mesh() == CHIC and tex() == BODY_GAME and W.slotState(yi) == 'unused',
+          (mesh(), tex(), W.slotState(yi)))
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp, mod, L, G, W, mesh, tex = run('skin_under = false\n')   # Auto Wear on
+    ids = [x.id for x in W.slots().values()]
+    W.setVariant(ids.index('X/main') + 1, 1)
+    G.settle()
+    G.tickGT(40)
+    W.setVariant(ids.index('Y/main') + 1, 1)
+    G.settle()
+    G.tickGT(40)
+    check('  and Auto Wear puts the skin mod\'s own body on in place of the outfit, as 1.3.1 did',
+          W.isWear('Y/main') and mesh().startswith('/Game/Characters/ZWSKIN/'), (W.isWear('Y/main'), mesh()))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- PC 17 Nov: "after a modded outfit was removed the default outfit didn't look correct, and
+    # Fix look and All off didn't fix it". Fix look had dropped every body's Wear record (what the
+    # game had on it under the worn mesh), also of characters the game did not re-dress.
+    SLOT0 = 'function() local m = ACTORS[1].Body:GetMaterial(0); return (m._p.Parent and m._p.Parent._path) or m._path end'
+    tmp, mod, L, G, W, mesh, tex = run('')
+    li = [x.id for x in W.slots().values()].index('L/Body') + 1
+    L.eval(BODY_MAT)()                                           # what the game has on the body: its skin material
+    W.setVariant(li, 1)                                          # worn in place of Chic (Auto Wear)
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('Wear notes what the game had on each slot of the body (for the log)',
+          mesh().startswith('/Game/Characters/ZWLIGHT/')
+          and 'under it: SK_Lune_Chic, 1 slot(s) (* = a dynamic instance): 0 body=MI_Body_Lune' in live
+          and 'wears: Lune SK_Lune_Placeholder (worn over SK_Lune_Chic)' in live,
+          [x for x in live.splitlines() if 'under it' in x or 'wears:' in x][-2:])
+    G.assignHook('Lune')
+    W.fixLook()
+    G.settle()
+    W.setWear('L/Body', False)
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('Fix look keeps the Wear records: Unwear after it still goes back to the outfit and what the game had on it',
+          mesh() == CHIC and L.eval(SLOT0)() == '/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune'
+          and 'Fix look: 1 Wear record(s) kept' in live and '1 material(s) the game had on it are back' in live
+          and 'now: SK_Lune_Chic, 1 slot(s) (* = a dynamic instance): 0 body=MI_Body_Lune' in live,
+          (mesh(), L.eval(SLOT0)(), [x for x in live.splitlines() if 'Wear record' in x or 'now:' in x]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # one body component, two characters (the walking character): each has its own record
+    tmp, mod, L, G, W, mesh, tex = run('auto_wear = false\n')
+    ids = [x.id for x in W.slots().values()]
+    li, zi = ids.index('L/Body') + 1, ids.index('Z/main') + 1
+    G.PARTY()
+    W.setVariant(li, 1)
+    W.setWear('L/Body', True)                                    # Lune leads: a costume over Chic
+    G.settle()
+    G.LEAD(G.SCIEL, '/Game/Characters/Sciel/Base/SK_Sciel_Base.SK_Sciel_Base')
+    W.setVariant(zi, 1)
+    W.setWear('Z/main', True)                                    # Sciel leads: an outfit over her own
+    G.settle()
+    worn_s = mesh()
+    G.LEAD(G.LUNE, '/Game/Characters/ZWLIGHT/Body/SK_Lune_Placeholder.SK_Lune_Placeholder')   # as the mod left it
+    W.applyAll('test')
+    G.settle()
+    W.setWear('L/Body', False)
+    G.settle()
+    check('a body shared by the party: Lune\'s Unwear goes back to Lune\'s outfit, not to the last leader\'s',
+          worn_s.startswith('/Game/Characters/ZWZ/') and mesh() == CHIC, (worn_s, mesh()))
+    G.LEAD(G.SCIEL, '/Game/Characters/ZWZ/Skin/SK_Sciel_Worn.SK_Sciel_Worn')
+    W.applyAll('test')
+    G.settle()
+    W.setWear('Z/main', False)
+    G.settle()
+    check('  and Sciel\'s to Sciel\'s', mesh() == '/Game/Characters/Sciel/Base/SK_Sciel_Base.SK_Sciel_Base', mesh())
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # Unwear with the record intact: a slot the game ships without a material is empty again
+    BASE_SLOTS = ('/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune | '
+                  '/Game/Characters/Lune/Base/MI_Base_Coat.MI_Base_Coat | empty')
+    tmp, mod, L, G, W, mesh, tex = run('')
+    gi = [x.id for x in W.slots().values()].index('G3/main') + 1
+    G.BASE_OUTFIT()
+    W.setVariant(gi, 1)                                          # worn; its two empty slots get the skin material
+    G.settle()
+    G.tickGT(40)
+    worn3 = G.SLOTS3()
+    W.setWear('G3/main', False)
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('Unwear: the game\'s materials are back and its empty slot is empty again (not what the worn mesh had there)',
+          worn3.count('instance of /Game/Characters/Lune/Body/MI_Body_Lune') == 2 and G.SLOTS3() == BASE_SLOTS
+          and mesh().endswith('SK_Lune_Base.SK_Lune_Base'), (worn3, G.SLOTS3()))
+    check('  nothing is "filled" on the game\'s own mesh (its empty slots are how the game ships it)',
+          "the mod's mesh has no material for slot lambert1" not in live, [x for x in live.splitlines() if 'lambert1' in x])
+    # ... and with the record gone (here: the component was renamed, as on a reused address): the
+    # outfit's own mesh from its Blueprint, and its own materials, not the worn mesh's leftovers
+    W.setWear('G3/main', True)
+    G.settle()
+    L.execute('ACTORS[1].Body._path = "/Game/Map.Actor.Body_renamed"')
+    W.setWear('G3/main', False)
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('Unwear without a record: back to the outfit\'s own mesh with its own materials',
+          mesh().endswith('SK_Lune_Base.SK_Lune_Base') and G.SLOTS3() == BASE_SLOTS
+          and "back to this outfit's own mesh (a worn mesh was left on it)" in live
+          and "materials: the outfit's own again (3 slot(s); 0 set by its Blueprint, 0 the game's own instances)" in live,
+          (mesh(), G.SLOTS3(), [x for x in live.splitlines() if 'own again' in x]))
+    W.dump()
+    G.settle()
+    dtxt = open(os.path.join(mod, 'dump.txt'), encoding='utf-8').read()
+    check('  dump.txt names the outfit\'s own body from its Blueprint, the component and its Wear record',
+          "outfit's own body (its Blueprint): mesh=/Game/Characters/Lune/Base/SK_Lune_Base; materials it sets: none" in dtxt
+          and 'component=/Game/Map.Actor.Body_renamed' in dtxt and 'Wear record: none' in dtxt,
+          [x for x in dtxt.splitlines() if 'own body' in x or 'Wear record' in x or 'component=' in x][:4])
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- PC 17 Nov: "some outfits still say missing pieces". A piece nothing on its character uses
+    # can't show: it is left out of the count (here: a costume's body and belt textures; the body
+    # shows neither). Another character using the belt texture doesn't make it Lune's.
+    tmp, mod, L, G, W, mesh, tex = run('')
+    ci = [x.id for x in W.slots().values()].index('C2/main') + 1
+    G.ADD_SCIEL_BELTED()
+    L.execute(r'''
+      -- an NPC (no character) whose body uses the body texture the costume also brings
+      asset("SkeletalMesh", "/Game/Characters/NPCs/SK_NPC_Woman", "SK_NPC_Woman",
+        { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune") } }) })
+      local b = meshComp("Body", get("/Game/Characters/NPCs/SK_NPC_Woman.SK_NPC_Woman"))
+      b._path = "/Game/Map.PersistentLevel.Bp_Cine_NPC_C_2.Body"
+      local npc = new("Bp_Cine_NPC_C", "/Game/Map.PersistentLevel.Bp_Cine_NPC_C_2", {},
+        { K2_GetComponentsByClass = function() return TArray({ b }) end })
+      npc._class = new("BlueprintGeneratedClass", "/Game/Characters/NPCs/Bp_Cine_NPC.Bp_Cine_NPC_C")
+      npc._class._super = { GetFName = function() return { ToString = function() return "BP_CineCharacter_Main_C" end } end,
+                            IsValid = function() return true end, GetSuperStruct = function() return nil end }
+      npc._skin = "BP_CineCharacter_Main_C"
+      table.insert(ACTORS, npc)
+    ''')
+    W.setVariant(ci, 1)                                          # worn in place of Chic (Auto Wear)
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    ln = [x for x in live.splitlines() if 'on screen: Cat: Lune costume' in x]
+    sh = W.slotShown('C2/main')
+    check('pieces nothing on the character uses are not counted as missing: 1/1, not 1/3 (also when another '
+          'character, or an NPC, uses one of them)',
+          mesh().startswith('/Game/Characters/ZWLIGHT/') and sh.shown == 1 and sh.total == 1
+          and ln and ': 1/1 asset(s); 2 not used by anything on screen, not counted (' in ln[-1]
+          and 'not shown:' not in ln[-1], (sh.shown, sh.total, ln[-1:]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- PC 17 Nov (game running): the game moves the walking character's Body between the party
+    # pawn and the outfit actors, so the component's full path changes with its owner. That is the
+    # same object: its Wear record stays (it was dropped as "address reused").
+    tmp, mod, L, G, W, mesh, tex = run('')
+    li = [x.id for x in W.slots().values()].index('L/Body') + 1
+    L.eval(BODY_MAT)()
+    W.setVariant(li, 1)                                          # worn in place of Chic (Auto Wear)
+    G.settle()
+    G.tickGT(40)
+    L.execute('ACTORS[1].Body._path = "/Game/Map.PersistentLevel.BP_jRPG_Character_World_C_7.Body"')
+    W.applyAll('test')
+    G.settle()
+    L.execute('ACTORS[1].Body._path = "/Game/Map.PersistentLevel.BP_Lune_Skin_Chic_C_1.Body"')
+    W.setWear('L/Body', False)
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('a body moved to another owner and back keeps its Wear record: Unwear restores what the game had on it',
+          mesh() == CHIC and L.eval(SLOT0)() == '/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune'
+          and '1 material(s) the game had on it are back' in live and "back to this outfit's own mesh" not in live,
+          (mesh(), L.eval(SLOT0)(), [x for x in live.splitlines() if 'back' in x][-3:]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # an NPC whose body shows an NPC mesh is no party member, even if it carries a party member's
+    # weapon (PC 17 Nov: cutscene expeditioners with Gustave's weapon were listed as Gustave)
+    tmp, mod, L, G, W, mesh, tex = run('')
+    L.execute(r"""
+      asset("SkeletalMesh", "/Game/Characters/NPCs/SK_NPC_Male_A", "SK_NPC_Male_A",
+        { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic") } }) })
+      asset("StaticMesh", "/Game/Characters/Gustave/Weapons/SM_Gustave_Weapon_Handle", "SM_Gustave_Weapon_Handle", {})
+      local b = meshComp("Body", get("/Game/Characters/NPCs/SK_NPC_Male_A.SK_NPC_Male_A"))
+      b._path = "/Game/Map.PersistentLevel.Bp_Cine_NPC_C_1.Body"
+      local w = new("StaticMeshComponent", "/Game/Map.PersistentLevel.Bp_Cine_NPC_C_1.Weapon_R_SM_Handle",
+        { StaticMesh = get("/Game/Characters/Gustave/Weapons/SM_Gustave_Weapon_Handle.SM_Gustave_Weapon_Handle") })
+      local npc = new("Bp_Cine_NPC_C", "/Game/Map.PersistentLevel.Bp_Cine_NPC_C_1", {},
+        { K2_GetComponentsByClass = function() return TArray({ b, w }) end })
+      npc._class = new("BlueprintGeneratedClass", "/Game/Characters/NPCs/Bp_Cine_NPC.Bp_Cine_NPC_C")
+      npc._class._super = { GetFName = function() return { ToString = function() return "BP_CineCharacter_Main_C" end } end,
+                            IsValid = function() return true end, GetSuperStruct = function() return nil end }
+      npc._skin = "BP_CineCharacter_Main_C"
+      table.insert(ACTORS, npc)
+    """)
+    W.applyAll('test')
+    G.settle()
+    chars = list(W.loadedChars().values())
+    check('an NPC with a party member\'s weapon is not taken for that member', 'Gustave' not in chars
+          and 'Lune' in chars, chars)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- PC 17 Nov evening, with "game dresses (B)" on: the game spawned the variant's own
+    # relocated Blueprint, whose own mesh is the mod's mesh. With the pick off, the mod "changed"
+    # the mesh to the same mesh and reset the materials, and would on every pass.
+    tmp, mod, L, G, W, mesh, tex = run('')
+    L.execute(r"""
+      local c = new("BlueprintGeneratedClass", "/Game/Characters/ZWB/BP_Lune_Skin_Chic.BP_Lune_Skin_Chic_C")
+      c._super = ACTORS[1]._class._super
+      ACTORS[1]._class = c
+      local t = meshComp("Body_GEN_VARIABLE", get("/Game/Characters/ZWOUTFITA/Chic/SK_Lune_Chic.SK_Lune_Chic"))
+      t._p.OverrideMaterials = TArray({})
+      REGSET("/Game/Characters/ZWB/BP_Lune_Skin_Chic.BP_Lune_Skin_Chic_C:Body_GEN_VARIABLE", t)
+      ACTORS[1].Body._mesh = get("/Game/Characters/ZWOUTFITA/Chic/SK_Lune_Chic.SK_Lune_Chic")
+    """)
+    W.applyAll('test')
+    G.settle()
+    W.applyAll('again')
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    again = [x for x in live.splitlines() if 'pass (again)' in x]
+    check('an outfit actor that is the variant\'s own Blueprint, pick off: no "back to its own mesh" with the same '
+          'mesh; the game\'s version of the mesh shows, and the next pass changes nothing',
+          "back to this outfit's own mesh" not in live and mesh() == CHIC
+          and "(variant off: the game's own)" in live and again and ': 0 change(s)' in again[0],
+          (mesh(), [x for x in live.splitlines() if 'mesh /' in x][:3], again))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- PC 17 Nov evening (all-options run): on a hidden outfit actor the game freed its own
+    # material instances while a mesh was worn over them, and Unwear put the plain materials back
+    # ("0 material(s) the game had on it are back"). The instance is rebuilt from the record.
+    tmp, mod, L, G, W, mesh, tex = run('')
+    li = [x.id for x in W.slots().values()].index('L/Body') + 1
+    L.execute('GAMEMID = ACTORS[1].Body:CreateDynamicMaterialInstance(0, '
+              'get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune"), FName("None"))')
+    W.setVariant(li, 1)                                          # worn in place of Chic (Auto Wear)
+    G.settle()
+    G.tickGT(40)
+    L.execute('GAMEMID._path = GAMEMID._path .. "_freed"')       # another object at that address now
+    W.setWear('L/Body', False)
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    m0 = L.eval('function() local m = ACTORS[1].Body:GetMaterial(0); '
+                'return m ~= GAMEMID and m._p.Parent ~= nil and m._p.Parent._path end')()
+    check('a game instance freed while a mesh was worn: Unwear rebuilds it (same parent), not the plain material',
+          mesh() == CHIC and m0 == '/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune'
+          and '0 material(s) the game had on it are back, 1 rebuilt (the game had freed them)' in live,
+          (mesh(), m0, [x for x in live.splitlines() if 'are back' in x][-1:]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- PC 17 Nov, all-options run: an option that brings the outfit's own Blueprint, whose Body
+    # uses another of the game's meshes and sets the option's own material. On: the option's
+    # material was replaced by the new mesh's default. Off: the mesh stayed.
+    tmp, mod, L, G, W, mesh, tex = run('')
+    L.execute(r"""
+      asset("BlueprintGeneratedClass", "/Game/Characters/ZWBPFIX/BP_Lune_Skin_Chic", "BP_Lune_Skin_Chic_C", {})
+      asset("MaterialInstanceConstant", "/Game/Characters/ZWBPFIX/MI_Base_Coat", "MI_Base_Coat", { TextureParameterValues = TArray({}) })
+      local own = meshComp("Body_GEN_VARIABLE", get("/Game/Characters/Lune/Chic/SK_Lune_Chic.SK_Lune_Chic"))
+      own._p.OverrideMaterials = TArray({})
+      REGSET("/Game/Characters/Lune/BP_Lune_Skin_Chic.BP_Lune_Skin_Chic_C:Body_GEN_VARIABLE", own)
+      local fix = meshComp("Body_GEN_VARIABLE", get("/Game/Characters/Lune/Base/SK_Lune_Base.SK_Lune_Base"))
+      fix._p.OverrideMaterials = TArray({ get("/Game/Characters/ZWBPFIX/MI_Base_Coat.MI_Base_Coat") })
+      REGSET("/Game/Characters/ZWBPFIX/BP_Lune_Skin_Chic.BP_Lune_Skin_Chic_C:Body_GEN_VARIABLE", fix)
+    """)
+    pi = [x.id for x in W.slots().values()].index('P/main') + 1
+    S0 = 'function() local m = ACTORS[1].Body:GetMaterial(0); return (m._p.Parent and m._p.Parent._path) or m._path end'
+    W.setVariant(pi, 1)
+    G.settle()
+    on = (mesh(), L.eval(S0)())
+    W.setVariant(pi, 0)
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('an option\'s outfit Blueprint: its body mesh, with the material its Blueprint sets (not the mesh\'s default)',
+          on == ('/Game/Characters/Lune/Base/SK_Lune_Base.SK_Lune_Base',
+                 '/Game/Characters/ZWBPFIX/MI_Base_Coat.MI_Base_Coat'), on)
+    check('  switched off: the outfit\'s own body and material again',
+          mesh() == CHIC and L.eval(S0)() == '/Game/Characters/Lune/Chic/MI_Chic.MI_Chic'
+          and "the option's outfit Blueprint is off: back to this outfit's own part" in live,
+          (mesh(), L.eval(S0)(), [x for x in live.splitlines() if 'Blueprint' in x][-2:]))
+    W.applyAll('again')
+    G.settle()
+    again = [x for x in open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read().splitlines() if 'pass (again)' in x]
+    check('  and the next pass changes nothing', again and ': 0 change(s)' in again[0], again)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- all-options run, 17 Nov: a mod mesh with empty slots, made for the outfit worn; the mod
+    # fills its empty slots. Switched off, the game's mesh came back but kept the fill on a slot the
+    # game ships empty (Sciel's own outfit kept a skin material on slot 8).
+    tmp, mod, L, G, W, mesh, tex = run('auto_wear = false\n')
+    L.execute(r"""
+      asset("SkeletalMesh", "/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_D_Skin", "SK_Lune_Bikini_D_Skin",
+        { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic"), MaterialSlotName = FName("Bikini") },
+                               { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune"), MaterialSlotName = FName("Body") },
+                               { MaterialSlotName = FName("Extra") } }) })
+      ACTORS[1].Body._mesh = get("/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_D_Skin.SK_Lune_Bikini_D_Skin")
+    """)
+    gi = [x.id for x in W.slots().values()].index('G3/main') + 1
+    S2 = 'function() return ACTORS[1].Body:GetMaterial(2) ~= nil end'
+    W.setVariant(gi, 1)
+    G.settle()
+    on = (mesh(), L.eval(S2)())
+    W.setVariant(gi, 0)
+    G.settle()
+    check('a mod mesh\'s filled empty slot is cleared when the game\'s mesh (with that slot empty) comes back',
+          on == ('/Game/Characters/ZWGREY3/Body/SK_Lune_Bikini_D_Skin.SK_Lune_Bikini_D_Skin', True)
+          and mesh() == '/Game/Characters/Lune/Customization/Skin/SK_Lune_Bikini_D_Skin.SK_Lune_Bikini_D_Skin'
+          and L.eval(S2)() is False, (on, mesh(), L.eval(S2)()))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- all-options run, 17 Nov: an outfit worn over Chic (Wear), then a skin mod picked that
+    # replaces the same game mesh (the base body). The skin mod's mesh took the worn one's place,
+    # the Wear record was lost, and with everything off Lune stood in the game's base body.
+    tmp, mod, L, G, W, mesh, tex = run('auto_wear = false\nwear = L/Body\n')
+    ids = [x.id for x in W.slots().values()]
+    li, yi = ids.index('L/Body') + 1, ids.index('Y/main') + 1
+    L.eval(BODY_MAT)()
+    W.setVariant(li, 1)                                          # worn in place of Chic (its Wear flag)
+    G.settle()
+    G.tickGT(40)
+    W.setVariant(yi, 1)                                          # the skin mod: also a base body, not worn
+    G.settle()
+    G.tickGT(40)
+    worn = mesh()
+    W.setVariant(li, 0)
+    G.settle()
+    W.setVariant(yi, 0)
+    G.settle()
+    check('a worn mesh stays when another pick replaces the same game mesh, and all off gives the outfit back',
+          worn.startswith('/Game/Characters/ZWLIGHT/') and mesh() == CHIC, (worn, mesh()))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- rerun, 17 Nov (a skin mod for Sciel picked with Wear off, then off): the mod's version of the
+    # game's mesh has a material on a slot the game ships empty, and the game made its own instance
+    # of it there. With the game's mesh back that slot kept it; Fix look and all off didn't help.
+    tmp, mod, L, G, W, mesh, tex = run('auto_wear = false\n')
+    ei = [x.id for x in W.slots().values()].index('E/main') + 1
+    G.BASE_OUTFIT()
+    W.setVariant(ei, 1)
+    G.settle()
+    on = mesh()
+    L.execute('ACTORS[1].Body:CreateDynamicMaterialInstance(2, get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic"), FName("None"))')
+    worn = G.SLOTS3()
+    W.setVariant(ei, 0)
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('a mod\'s mesh off: a slot the game\'s mesh ships empty is empty again (the game had made an instance there)',
+          on.startswith('/Game/Characters/ZWEMPTY/') and worn.endswith('| instance of /Game/Characters/Lune/Chic/MI_Chic.MI_Chic')
+          and mesh().endswith('/Lune/Base/SK_Lune_Base.SK_Lune_Base') and G.SLOTS3() == BASE_SLOTS
+          and "mat2 /Game/Characters/Lune/Chic/MI_Chic -> empty (the game's mesh has no material for this slot)" in live,
+          (on, worn, mesh(), G.SLOTS3(), [x for x in live.splitlines() if '-> empty' in x][-2:]))
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp, mod, L, G, W, mesh, tex = run('auto_wear = false\n')
+    ei = [x.id for x in W.slots().values()].index('E/main') + 1
+    G.BASE_OUTFIT()
+    L.execute('ACTORS[1].Body:SetMaterial(2, get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune"))')
+    W.setVariant(ei, 1)
+    G.settle()
+    W.setVariant(ei, 0)
+    G.settle()
+    check('  a material the game itself put on that slot (not the mod\'s mesh\'s) stays',
+          mesh().endswith('/Lune/Base/SK_Lune_Base.SK_Lune_Base')
+          and G.SLOTS3().endswith('| /Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune'), (mesh(), G.SLOTS3()))
+    shutil.rmtree(tmp, ignore_errors=True)
+    # a leftover like that from an older build (or from anywhere): a pass leaves it, Fix look clears
+    # it. A material the outfit's Blueprint sets on such a slot stays.
+    tmp, mod, L, G, W, mesh, tex = run('')
+    G.BASE_OUTFIT()
+    L.execute('ACTORS[1].Body:SetMaterial(2, get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic"))')
+    W.applyAll('test')
+    G.settle()
+    kept = G.SLOTS3()
+    # a cutscene NPC (no party character) on its own mesh, with a material on its empty slot
+    L.execute(r'''
+      asset("SkeletalMesh", "/Game/Characters/NPCs/SK_NPC_Two", "SK_NPC_Two",
+        { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic") },
+                               { MaterialSlotName = FName("lambert1") } }) })
+      local b = meshComp("Body", get("/Game/Characters/NPCs/SK_NPC_Two.SK_NPC_Two"))
+      b._path = "/Game/Map.PersistentLevel.Bp_Cine_NPC_C_3.Body"
+      b:SetMaterial(1, get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic"))
+      NPCBODY = b
+      local npc = new("Bp_Cine_NPC_C", "/Game/Map.PersistentLevel.Bp_Cine_NPC_C_3", {},
+        { K2_GetComponentsByClass = function() return TArray({ b }) end })
+      npc._class = new("BlueprintGeneratedClass", "/Game/Characters/NPCs/Bp_Cine_NPC.Bp_Cine_NPC_C")
+      npc._class._super = { GetFName = function() return { ToString = function() return "BP_CineCharacter_Main_C" end } end,
+                            IsValid = function() return true end, GetSuperStruct = function() return nil end }
+      npc._skin = "BP_CineCharacter_Main_C"
+      table.insert(ACTORS, npc)
+      -- and Lune's outfit actor gets a second part (its template is not needed by Fix look)
+      asset("SkeletalMesh", "/Game/Characters/Lune/Hair/SK_Lune_Hair_A", "SK_Lune_Hair_A",
+        { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic") } }) })
+      local lune = ACTORS[1]
+      local hair = meshComp("Hair", get("/Game/Characters/Lune/Hair/SK_Lune_Hair_A.SK_Lune_Hair_A"))
+      hair._path = lune._path .. ".Hair"
+      lune._f.K2_GetComponentsByClass = function() return TArray({ lune.Body, hair }) end
+      local sfo = StaticFindObject
+      FINDS = {}
+      StaticFindObject = function(p, ...) FINDS[#FINDS + 1] = tostring(p); return sfo(p, ...) end
+    ''')
+    G.assignHook('Lune')
+    W.fixLook()
+    G.settle()
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('Fix look: a leftover material on a slot the game\'s mesh ships empty comes off (a plain pass leaves it)',
+          kept.endswith('| /Game/Characters/Lune/Chic/MI_Chic.MI_Chic') and G.SLOTS3() == BASE_SLOTS
+          and 'pass (after Fix look)' in live
+          and "-> empty (the game's mesh has no material for this slot; Fix look)" in live,
+          (kept, G.SLOTS3(), [x for x in live.splitlines() if 'Fix look' in x][-3:]))
+    finds = list(L.eval('function() local t = {}; for _, f in ipairs(FINDS) do t[#t + 1] = f end; return t end')().values())
+    npc_finds = [f for f in finds if 'Bp_Cine_NPC_C:' in f]
+    check('  a cutscene NPC is left alone: its slot keeps its material, and none of its class\'s parts is looked up '
+          '(PC: 13 NPCs made the pass 458 ms)',
+          L.eval('function() return NPCBODY:GetMaterial(1) ~= nil end')() is True and not npc_finds, npc_finds[:3])
+    check('  and of Lune\'s outfit Blueprint only the Body is looked up, not her other parts',
+          not [f for f in finds if 'BP_Lune_Skin_Chic_C:Hair' in f], [f for f in finds if ':' in f][:4])
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp, mod, L, G, W, mesh, tex = run('')
+    G.BASE_OUTFIT()
+    L.execute(r'''
+      local t = meshComp("Body_GEN_VARIABLE", get("/Game/Characters/Lune/Base/SK_Lune_Base.SK_Lune_Base"))
+      t._p.OverrideMaterials = TArray({ NULLOBJ(), NULLOBJ(), get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic") })
+      REGSET("/Game/Characters/Lune/BP_Lune_Skin_Chic.BP_Lune_Skin_Chic_C:Body_GEN_VARIABLE", t)
+      ACTORS[1].Body:SetMaterial(2, get("/Game/Characters/Lune/Chic/MI_Chic.MI_Chic"))
+    ''')
+    G.assignHook('Lune')
+    W.fixLook()
+    G.settle()
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    check('  a material the outfit\'s Blueprint sets on that slot stays',
+          G.SLOTS3().endswith('| /Game/Characters/Lune/Chic/MI_Chic.MI_Chic') and 'pass (after Fix look)' in live,
+          G.SLOTS3())
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- rerun, 17 Nov: an outfit option for the base body worn over Chic (Auto Wear), then a skin
+    # mod (also a base body) picked: its texture goes under the worn outfit and its own body is left
+    # off on purpose. It read "5/6, not shown: SK_Lune_Placeholder", as if a piece were missing.
+    tmp, mod, L, G, W, mesh, tex = run('')
+    ids = [x.id for x in W.slots().values()]
+    qi, yi = ids.index('Q/main') + 1, ids.index('Y/main') + 1
+    W.setVariant(qi, 1)
+    G.settle()
+    G.tickGT(40)
+    W.setVariant(yi, 1)
+    G.settle()
+    G.tickGT(40)
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    ln = [x for x in live.splitlines() if 'on screen: Skin Light: Lune' in x]
+    sh = W.slotShown('Y/main')
+    check('a skin mod under a worn outfit for the same base body: its texture counts, its own body (left off) does not',
+          W.isWear('Q/main') and not W.isWear('Y/main') and mesh().startswith('/Game/Characters/ZWOPT/')
+          and tex() == BODY_SKIN and sh and sh.shown == 1 and sh.total == 1
+          and ln and 'its own body left off (skin under the outfit), not counted' in ln[-1] and 'not shown' not in ln[-1],
+          (W.isWear('Q/main'), W.isWear('Y/main'), mesh(), tex(), sh and (sh.shown, sh.total), ln[-1:]))
+    shutil.rmtree(tmp, ignore_errors=True)
+    # skin_under off: its body is not "left off on purpose" (Auto Wear would wear it; taken off by
+    # hand here), so it counts as not shown. Its texture still shows: the outfit is made for the
+    # same base body, as in 1.3.1.
+    tmp, mod, L, G, W, mesh, tex = run('skin_under = false\n')
+    ids = [x.id for x in W.slots().values()]
+    W.setVariant(ids.index('Q/main') + 1, 1)
+    G.settle()
+    G.tickGT(40)
+    W.setVariant(ids.index('Y/main') + 1, 1)
+    G.settle()
+    G.tickGT(40)
+    W.setWear('Y/main', False)                                   # (Auto Wear put it on: take it off again)
+    G.settle()
+    live = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    ln = [x for x in live.splitlines() if 'on screen: Skin Light: Lune' in x]
+    sh = W.slotShown('Y/main')
+    check('  with skin_under off its body, taken off by hand, counts as not shown',
+          mesh().startswith('/Game/Characters/ZWOPT/') and sh and sh.shown == 1 and sh.total == 2
+          and ln and 'not shown: SK_Lune_Placeholder' in ln[-1] and 'left off' not in ln[-1],
+          (mesh(), tex(), sh and (sh.shown, sh.total), ln[-1:]))
+    shutil.rmtree(tmp, ignore_errors=True)
 
     # an old pick saved under the unsplit slot is carried over too
     tmp, mod, L, G, W, mesh, tex = run('', selection='K/main\tK/a\n')

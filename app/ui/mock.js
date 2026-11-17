@@ -235,7 +235,7 @@
           items: ['Sciel color \u00b7 Pearl', 'Sciel color \u00b7 Smoke'], what: 'options' },
         { level: 'info', text: "4 options link to files the mod doesn't include: Sciel outfit \u00b7 Lace dress: sleeveless, barefoot, Sciel outfit \u00b7 Lace dress: sleeveless, boots, Sciel outfit \u00b7 Lace dress: sleeves, barefoot and 1 more.",
           items: missing, what: 'options' },
-        { level: 'warn', text: '"Chic Variants Old" has 3 of this mod\'s new files (T_Chic_Trim_D, T_Chic_Trim_N and MI_Chic_Trim). Two versions of one mod? Keep only one in the library.',
+        { level: 'warn', text: '"Chic Variants Old" has 3 of this mod\'s new files (T_Chic_Trim_D, T_Chic_Trim_N and MI_Chic_Trim). Only one copy of each loads in game. If one mod is an older download of the other, keep only one in the library; if they are different mods, one may use the other\'s copy and look wrong.',
           items: ['/Game/Characters/Sciel/Chic/MI_Chic_Trim', '/Game/Characters/Sciel/Chic/T_Chic_Trim_D', '/Game/Characters/Sciel/Chic/T_Chic_Trim_N'], what: 'files',
           compare: 'Chic Variants Old' },
       ],
@@ -631,9 +631,9 @@
           detail: "The game didn't find the variant's mesh. Its files in ~mods may be older than the menu's list.",
           hint: 'Repair it, then press Reload in the menu.', first: '21:07:30', last: '21:07:30', count: 1,
           fix: { kind: 'repair', mod: 'Chic Variants', variant: 'Chic Variants/Sciel color/Pearl_P' } },
-        { key: 'watchdog', level: 'warn', title: 'The game stopped responding for 9 s',
-          detail: 'The menu was idle, so the pause came from the game itself. During a long loading screen this is normal.',
-          hint: 'If it happens outside loading screens, note the time and attach report.txt to a bug report.',
+        { key: 'watchdog-idle', level: 'info', title: 'The game stopped responding for 9 s',
+          detail: 'The menu was idle, so the pause came from the game itself. Loading screens do this.',
+          hint: 'Nothing to do if it was a loading screen. If the game froze, send report.txt.',
           first: '21:05:01', last: '21:06:10', count: 3 },
         { key: 'empty-material:Sciel:body:MI_Body_Sciel', level: 'info', title: "Filled an empty material slot on Sciel's outfit",
           detail: "The mod's mesh has no material for slot body (material 1), so the menu used MI_Body_Sciel (the body's material for slot body).",
@@ -659,7 +659,7 @@
   }
 
   function problemLines(m) {
-    const by = { 'missing:chic-sciel-pearl': /Pearl/, watchdog: /WATCHDOG/, 'hidden:sciel-chic': /hidden by Sciel/ };
+    const by = { 'missing:chic-sciel-pearl': /Pearl/, 'watchdog-idle': /WATCHDOG/, 'hidden:sciel-chic': /hidden by Sciel/ };
     m.problems.forEach(p => { p.lines = by[p.key] ? m.tail.filter(l => by[p.key].test(l)) : []; });
   }
 
@@ -781,7 +781,7 @@
       ui.selectTab('mods'); ui.selectMod('Chic Variants');
       ui.check(['Chic Variants', 'Claudia Set', 'Feline Sorceress', 'Infernal Herald']); await wait(120); ui.askRemoveMany();
     },
-    gamelog_filter: () => { presetRunning(); return async ui => { ui.selectTab('log'); await wait(150); ui.filterProblem('watchdog'); }; },
+    gamelog_filter: () => { presetRunning(); return async ui => { ui.selectTab('log'); await wait(150); ui.filterProblem('watchdog-idle'); }; },
     gamelog_last: () => { presetLast(); return async ui => { ui.setLogSource('this'); ui.selectTab('log'); await wait(150); }; },
     gamelog_previous: () => { presetLast(); return async ui => { ui.setLogSource('previous'); ui.selectTab('log'); await wait(250); ui.filterProblem('load:T_Old'); }; },
     fx_tools_menu: () => async ui => { ui.selectTab('mods'); ui.selectMod('Chic Variants'); await wait(150); ui.toolsMenu(); },

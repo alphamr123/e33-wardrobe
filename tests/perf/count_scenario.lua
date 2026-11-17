@@ -137,15 +137,18 @@ function makeSciel(n)
   local owner = new("Character", "BP_jRPG_Character_Dialog_C", opath, { BP_CharacterSkinComponent = skinComp,
     AllMeshMaterials = TArray("AllMeshMaterials", {}) }, { GetOwner = function() return nil end })
   owner._class = ownerCls
+  skinComp._f.GetOwner = function() return owner end         -- the component's owner is the character
   local a
+  -- in game a skin actor has no owner (book ch 10: none of 255 traced); the character is known
+  -- through the skin component's OnSkinAssignCompleted (scenario c)
   a = new("Actor", "BP_CharacterSkinBase_Sciel_C", path, { Body = body }, {
     K2_GetComponentsByClass = function() return PARAMS("K2_GetComponentsByClass", { body, acc1, acc2 }) end,
-    GetOwner = function() return owner end, GetAttachParentActor = function() return nil end })
+    GetOwner = function() return nil end, GetAttachParentActor = function() return nil end })
   a._class = SCIEL_CLS
   a._find = { BP_CharacterSkinBase_C = true }
   for _, c in ipairs({ body, acc1, acc2 }) do OWNERS[c] = a ALLSKMC[#ALLSKMC + 1] = c end
   skinComp._p.SpawnedCharacterSkin = a
-  return a, body, owner
+  return a, body, owner, skinComp
 end
 
 function makeEsquie(n)

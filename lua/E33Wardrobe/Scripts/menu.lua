@@ -924,7 +924,9 @@ local function wearBtn(si, slot, w)
         if W.variantIndex(slot) == 0 then return nil end
         return btn("Unwear", function() setWear(si, slot, false) end, true, true, w)
     end
-    if not W.canWear(slot) or W.variantIndex(slot) == 0 or stateOf(si) ~= "unused" then return nil end
+    -- also for a skin mod showing under a mod outfit: its own body can still be worn instead
+    local can = stateOf(si) == "unused" or (W.asSkin and W.asSkin(slot))
+    if not W.canWear(slot) or W.variantIndex(slot) == 0 or not can then return nil end
     local worn = wornName(charOf(slot))
     if not worn then return nil end
     return btn("Wear", function() setWear(si, slot, true) end, true, false, w)   -- the row says in place of what
@@ -1016,7 +1018,8 @@ local function slotRow(rows, si)
         local t = W.targetOutfit(slot)
         value = value .. (t and (" · made for " .. W.outfitName(t)) or " · not visible")
     elseif note == "hidden" then value = value .. " · hidden"
-    elseif W.isWear(slot.id) and vi > 0 then value = value .. " · worn" end
+    elseif W.isWear(slot.id) and vi > 0 then value = value .. " · worn"
+    elseif vi > 0 and W.asSkin and W.asSkin(slot) then value = value .. " · skin under outfit" end
     local b
     local wb = wearBtn(si, slot, 1.5)
     if n == 1 then
@@ -1299,10 +1302,15 @@ local function settingRows(rows)
     row("match_groups", "Keep a mod's groups matched",
         "Picking a 'Lace dress' outfit switches that character's color to a 'Lace dress' color too (and back), "
         .. "as the mod needs matching pieces. Vanilla slots are left alone.")
-    row("auto_wear", "Auto Wear",
-        "ON: an outfit mod made for an outfit the character isn't wearing (Infernal Herald: Potato bag) is worn "
-        .. "in place of the current outfit as soon as you pick it. OFF: it waits for that outfit; Wear on the row "
-        .. "does it by hand.")
+    rows[#rows + 1] = { label = "Auto Wear / skin mods under outfits",
+        value = onoff(S.auto_wear) .. " / " .. onoff(S.skin_under), vauto = true,
+        vc = (S.auto_wear or S.skin_under) and C.good or C.dim,
+        help = "Auto Wear ON: an outfit mod made for an outfit the character isn't wearing (Infernal Herald: Potato "
+            .. "bag) is worn in place of the current outfit as soon as you pick it. OFF: Wear on the row does it by hand. "
+            .. "Skin mods ON: a skin mod (a body with skin textures only) puts its textures under the outfit worn, and "
+            .. "Wear on its row puts its own body on instead. OFF: it only shows as its own body.",
+        b = { btn("Auto Wear", toggle("auto_wear", "Auto Wear"), true, S.auto_wear),
+              btn("Skin mods", toggle("skin_under", "Skin mods under outfits", reapply), true, S.skin_under) } }
     row("show_technical", "Show technical slots (fix paks)",
         "Slots that change nothing you can see (e.g. a mod's Blueprint 'fix' pak) are hidden from Outfits, "
         .. "Randomize, All off and presets. They stay installed and selected as they are.",
@@ -1393,6 +1401,10 @@ local function pickResult(si)
                 W.outfitName(W.targetOutfit(slot, char)) or "another outfit", under or "the current outfit"), C.good
         end
         local sh = W.slotShown and W.slotShown(slot.id)
+        if W.asSkin and W.asSkin(slot) then
+            return string.format("its skin textures show under %s; Wear puts its own body on instead",
+                wornName(charOf(slot)) or "the outfit"), C.good
+        end
         if sh and sh.total > 0 then return string.format("%d/%d pieces on screen", sh.shown, sh.total), C.good end
         return "on screen", C.good
     end

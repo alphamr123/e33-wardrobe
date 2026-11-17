@@ -856,7 +856,8 @@ def relocate_variant(retoc, game_links, mod_root, rel, work, out_dir, variant_id
             notes.append(f'using the game\'s {c} {p} (mod copy dropped)')
         elif c == 'Skeleton':
             notes.append(f'skeleton {p} still overrides the game globally (--skeletons override)')
-    mapping = e33legacy.plan_relocation([p for p in packages if p not in keep], variant_id, ctx['used'])
+    mapping = e33legacy.plan_relocation([p for p in packages if p not in keep], variant_id, ctx['used'],
+                                        avoid=ctx['game_pkgs'])
     report = e33legacy.relocate_tree(legacy, renamed, mapping)
 
     # Shader libraries: give each variant its own chunk number so libraries don't collide.
@@ -1446,7 +1447,8 @@ def _main(argv, tee):
         if dup:
             p, n = next(iter(dup.items()))
             print(f'WARNING: {len(dup)} mod-only asset path(s) exist in several mods\' shared paks '
-                  f'(e.g. {p}: {", ".join(n)}). Two versions of one mod? Keep only one in the library.')
+                  f'(e.g. {p}: {", ".join(n)}). Only one copy of each loads in game. Two versions of one mod: '
+                  'keep only one in the library. Two different mods: one may use the other\'s copy and look wrong.')
         print('Lua mod written to', lua_dir, f'({len(registry)} mod(s) in the wardrobe)')
     print('Relocated paks in', out_root)
     print('Report (all mods):', os.path.join(out_root, 'relocate_report.json'))

@@ -169,8 +169,9 @@ try:
     p = keys(m).get('watchdog-work')
     check('watchdog while the menu works: warn, one stall, longest time in the title',
           p and p['level'] == 'warn' and p['count'] == 1 and p['title'] == 'The game stopped responding for 36 s', p)
-    check('  detail names the state and the last step',
-          p and 'apply pass (after map load)' in p['detail'] and 'SK_Lune_Clea' in p['detail'], p and p['detail'])
+    check('  detail names the state and the last thing the menu logged (not called a step: that is the breadcrumb)',
+          p and 'apply pass (after map load)' in p['detail'] and 'The last thing it logged: ' in p['detail']
+          and 'SK_Lune_Clea' in p['detail'] and 'step' not in p['detail'], p and p['detail'])
     g.live(66, 'WATCHDOG: last mod step: StaticFindObject /Game/Characters/Heros/Sciel/ZW1/SK_Sciel_Chic_skin')
     m.poll_once()
     p = keys(m).get('watchdog-work')
@@ -200,6 +201,20 @@ try:
     check('    a breadcrumb after an idle stall leaves the older work stall\'s detail alone',
           'StaticFindObject' in keys(m)['watchdog-work']['detail']
           and 'skin class check' not in keys(m)['watchdog-work']['detail'], keys(m)['watchdog-work']['detail'])
+    # book ch 19 (PC 15 Oct 01:54): a load that went on, then a real freeze, became one item "x2,
+    # stopped responding for 141 s ... normal during a loading screen"
+    g.live(140, f'WATCHDOG: the game thread has not run for 9 s; mod state: idle (since {hms(131)})')
+    g.live(170, f'WATCHDOG: the game thread has not run for 39 s; mod state: idle (since {hms(131)})')
+    m.poll_once()
+    k = keys(m)
+    went, now = k.get('watchdog-idle-went-on'), k.get('watchdog-idle')
+    check('  a stall after one that went on is its own item; the earlier ones are kept as "went on"',
+          went and went['count'] == 2 and went['title'] == 'The game paused 2 times, then went on (longest 32 s)'
+          and now and now['count'] == 1 and now['title'] == 'The game stopped responding for 39 s'
+          and now['level'] == 'warn', (went and went['title'], now and (now['count'], now['title'])))
+    check('    and a long idle stall is not called normal for a loading screen',
+          now and 'longer than most loading screens' in now['detail'] and 'normal' not in now['detail']
+          and 'froze' in now['hint'], now and (now['detail'], now['hint']))
 
     # ------------------------------------------------------------------ UE4SS.log errors
     g.ue(120, 'Ref was not function')

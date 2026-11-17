@@ -1815,7 +1815,7 @@
     });
   }
 
-  // -- Two versions of one mod? Compare and remove one
+  // -- The same new files in two mods: compare, and remove one if it is an older download
   async function openCompare(a, b) {
     const r = await call('compare_mods', a, b);
     if (showError(r, 'Compare')) return;
@@ -1844,8 +1844,10 @@
       layer.querySelector('.dlg-buttons [data-i="0"]').textContent = `Remove ${other.id}`;
     };
     await dialog({
-      title: 'Two versions of one mod? (experimental)', icon: 'warn', cls: 'w720',
-      html: `<p>Both mods bring the same ${plural(arr(r.shared).length, 'new file')}. Usually one is an older download of the other.</p>`
+      title: 'Same files in two mods (experimental)', icon: 'warn', cls: 'w720',
+      html: `<p>Both mods bring the same ${plural(arr(r.shared).length, 'new file')}. Only one copy of each loads in game. `
+        + 'Usually one mod is an older download of the other: keep one. If they are different mods, Cancel keeps both; '
+        + "one may then use the other's copy.</p>"
         + '<div class="cmp" id="cmp"></div><div class="choices" style="margin-top:8px"><label class="check"><input type="checkbox" name="del">'
         + '<span><span id="cmp-del"></span><br><span class="sub">Without this, it stays in the library and Install puts it back.</span></span></label></div>',
       buttons: [{ label: 'Remove', value: 'ok', default: true }, { label: 'Cancel', value: null, cancel: true }],

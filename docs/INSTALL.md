@@ -18,7 +18,8 @@ Tested on the Steam version. Game Pass should work but is untested.
 
 **You need:** UE4SS for Clair Obscur, from its Nexus page (mod 630), file
 **"UE4SS - Experimental (Newer)"**. Older UE4SS builds don't work. Tested with 3.0.1-1125 and
-3.0.1-1176; the first line of `ue4ss\UE4SS.log` names your build. The optional "Test: game dresses
+3.0.1-1176; the second line of `ue4ss\UE4SS.log` names your build by its Git SHA (1125 is
+`527a483b`, 1176 is `1ba38db4`). The optional "Test: game dresses
 (B)" setting needs 1176 or newer (from the "experimental" release of UE4SS-RE/RE-UE4SS on GitHub
 if the Nexus file is older).
 

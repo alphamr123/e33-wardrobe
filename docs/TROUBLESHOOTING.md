@@ -43,8 +43,8 @@ console command `wardrobe report`. With Settings > Auto report on (and recording
 rewritten 4 s after each change.
 
 **Privacy**: user names in folder paths (`C:\Users\<user>\...`) are replaced by `<user>` in
-report.txt, and so is your Windows user name elsewhere (spelled as Windows spells it, if it has 3 or
-more letters). It still lists your mods and folder names; look through it
+report.txt, and so is your Windows user name where it is a whole folder name in a path (spelled as
+Windows spells it, if it has 2 or more characters). It still lists your mods and folder names; look through it
 before posting it publicly.
 
 ## Session recording
@@ -69,7 +69,8 @@ While recording is on, a watchdog writes
 (every 50 ms) hasn't run for 6 seconds (at most one line per 15 s):
 
 - State `idle`: the mod wasn't doing anything when the game stopped. The stall is in the game or
-  engine. During a long loading screen this is normal.
+  engine. Loading screens do this for a few seconds (battles and map loads: 5-6 s); a stall that
+  goes on much longer and never ends with `ran again` is a freeze.
 - Another state (`mod work`, `dump`, …): the game stopped while the mod was working. The next
   line, `WATCHDOG: last mod step: …`, names the call it was making, and the `step` lines after it
   show the steps before (settings.txt `trace = true`, the default).

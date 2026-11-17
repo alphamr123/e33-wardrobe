@@ -19,6 +19,26 @@ def main():
         print(('PASS ' if cond else 'FAIL ') + name + ('' if cond else f'   -> {extra}'))
         fails += (not cond)
 
+    # FName number split, as the engine does it: up to 10 digits, no leading zero, below 2^31-1
+    import e33legacy
+    sn = e33legacy.split_number
+    cases = {'T_Body_1': ('T_Body', 2), 'Face_0': ('Face', 1), 'T_04': ('T_04', 0), 'Body': ('Body', 0),
+             'Groom_2147322598': ('Groom', 2147322599), 'Groom_2147483647': ('Groom_2147483647', 0),
+             'Groom_12345678901': ('Groom_12345678901', 0), 'T_²': ('T_²', 0), 'T_': ('T_', 0)}
+    got = {k: sn(k) for k in cases}
+    check('split_number: ten-digit numbers below 2147483647 split; leading zeros, too big, non-ASCII digits do not',
+          got == cases, {k: v for k, v in got.items() if v != cases[k]})
+
+    # book ch 12: a new path was checked against this run's and the registry's paths, never the game's
+    pkgs = ['/Game/Mods/OutfitFolder/T_Top', '/Game/Mods/OutfitFolder/SK_Top']
+    first = e33legacy.plan_relocation(pkgs, 'Mod/opt')
+    taken = {first[pkgs[0]].lower()}                         # as if the game had a package there
+    again = e33legacy.plan_relocation(pkgs, 'Mod/opt', avoid=taken)
+    check('plan_relocation: a path the game already has is not used (same length, still deterministic)',
+          again[pkgs[0]].lower() not in taken and len(again[pkgs[0]]) == len(pkgs[0])
+          and again[pkgs[1]] == first[pkgs[1]] and again == e33legacy.plan_relocation(pkgs, 'Mod/opt', avoid=taken),
+          (first, again))
+
     # PC 2026-10-11: two mods by one author both ship /Game/chic_MyMod (a PrimaryAssetLabel)
     label = {'/Game/chic_MyMod': {'class': 'PrimaryAssetLabel', 'object': 'chic_MyMod'}}
     tex = {'/Game/Characters/Lune/Bikini/T_Shared': {'class': 'Texture2D', 'object': 'T_Shared'}}

@@ -2,10 +2,199 @@
 
 What changed in each version, newest first.
 
+## 1.4.0
+
+In short: a skin mod now shows under the outfit worn (the game's or a mod's) instead of replacing
+it; switching outfits off puts the character's own outfit back as it was, also after Fix look;
+"pieces on screen" no longer reports pieces as missing that can't show. Recommended UE4SS build as
+for 1.3.1: 3.0.1-1176 or newer.
+
+In-game menu, skin mods and outfits (a comment on the mod page, and the 17 Nov game session):
+- A skin mod (a base body `SK_<Character>_Placeholder` whose textures and materials are all the
+  body's or the skin's by name, such as a skin texture replacer) now puts its textures under the outfit the
+  character wears, the game's own outfits included, wherever that outfit brings no version of its
+  own. This is what installing it as a replacer shows. Before, a variant with a mesh applied only
+  where its own mesh showed: the skin mod showed nothing under an outfit ("0/3 asset(s)" on 17
+  Oct), and Auto Wear then put its bare body on in place of the outfit, so you had the skin or the
+  outfit, not both.
+  - Auto Wear leaves the outfit on then. The row reads `on · skin under outfit` and still has
+    **Wear**, which puts the skin mod's own body on instead.
+  - Settings > "Auto Wear / skin mods under outfits" > **Skin mods** switches this off
+    (`skin_under = false` in settings.txt): then a skin mod only shows as its own body, as in 1.3.1.
+  - Unchanged: an outfit that brings its own body texture keeps it; a costume built on the base
+    body that also brings belt, coat or pants textures is an outfit and is worn in place as before;
+    an outfit made for another outfit lends nothing.
+  - Confirmed in game 17 Nov evening: a skin mod for Lune picked while she wore the game's Chic;
+    Chic stayed on, its skin material got all 5 of the mod's body textures (walking and menu
+    Lune), Auto Wear left it, and switching it off put the game's 5 textures back.
+- Removing a worn outfit put the character's own outfit back wrong, and Fix look and All off
+  didn't repair it (17 Nov: Sciel's coat and accessories showed skin, and two parts her outfit
+  ships without a material got her skin material). Three causes, all fixed:
+  - Fix look threw away the mod's record of what the game had on each body under a worn mesh, for
+    every character, though the game re-dresses only the one it shows. The records are kept now.
+  - The game moves the walking character's body between the party and the outfit actors when you
+    switch leader. The mod took the moved body for a different object and dropped its record. It
+    now checks the body by its own name. (Seen in the 17 Nov evening session: Sciel's record was
+    gone before Fix look ran.)
+  - Without a record, the mod put the outfit's mesh back but left the worn mesh's materials on its
+    slots, and filled the slots the game leaves empty. It now clears every slot first, sets what
+    the outfit's Blueprint sets, and reuses the game's own material copies where it still has
+    them. Nothing is filled on the game's own meshes any more.
+  - The walking character's body is one object for the whole party, so the record is now kept per
+    character: Lune's Unwear no longer goes back to the outfit of whoever led last.
+  - Confirmed in game 17 Nov evening: every switch-off of a worn outfit (a two-character outfit
+    mod, Altered Flower Suit, Fitting Outfits, Cheekier Chic, for Lune and Sciel, on walking and menu characters, also
+    after Fix look) put back the game's materials from the record, slot for slot as they were.
+- With "Test: game dresses (B)" on, the game can dress a character in the variant's own copy of
+  an outfit Blueprint. With that pick switched off, the mod set the same mesh again and reset the
+  materials on every pass (seen once in game, 17 Nov). Such an outfit now shows the game's
+  version of the mesh, and later passes leave it alone; Fix look gives the game's outfit back.
+- Found by a run over every option in game (17 Nov evening), all fixed:
+  - On a hidden outfit actor the game frees its own material copies while a mesh is worn over
+    them; switching it off then put the plain materials back. The record now keeps each copy's
+    parent and settings and rebuilds it when the game has freed it (a copy is checked by name, so
+    a new object at the same address isn't taken for it).
+  - An option that brings an outfit's own Blueprint (such as Cheekier Chic "Separate colors"): its
+    Blueprint's materials were replaced by the defaults of the mesh it puts on, and switching the
+    option off left that mesh on the character. The Blueprint's materials now stay, and switching
+    it off puts the outfit's own part back.
+  - A texture the mod puts into an empty link of an option's material counted as "not used" in
+    the pass that put it there.
+  - An outfit worn over another (Wear), then a second pick that replaces the same game mesh (an
+    outfit option and a skin mod both replace the base body): the second pick's mesh took the
+    worn one's place, the record of the outfit under it was lost, and with everything off Lune
+    stood in the game's base body instead of her Chic. A body showing its worn mesh now keeps it.
+  - Empty material slots the mod fills on a mod's mesh stayed filled when the game's own mesh came
+    back (Sciel's own outfit kept a skin material on a slot the game leaves empty). They are
+    cleared when the mesh changes.
+- Found by a second run over every option (17 Nov, late), both fixed:
+  - A mod that replaces the game's own outfit mesh, switched off without Wear: a slot the game's
+    mesh ships empty kept the mod's material there. A skin mod for Sciel has the scarf material on
+    the slot Sciel's own body leaves empty (`lambert1`), the game made its own copy of it, and that
+    copy stayed after the pick was off, through Fix look and All off, for the rest of the run. Such
+    a slot is now emptied when the game's mesh comes back, if what it holds came from the mod's
+    mesh or a variant; a material the game put there itself stays. Fix look now also empties
+    those slots on the party's own outfits, except where the outfit's Blueprint sets a material.
+    (A first version also looked at the 13 cutscene NPCs and every part of their Blueprints, and
+    the pass after Fix look took 458 ms instead of 55; it now looks only at party characters'
+    bodies.) A third run didn't reproduce the leftover: that time the game made no copy on that
+    slot, so this fix is tested in the mock only.
+  - A skin mod under an outfit that replaces the same base body (under Lune Outfit Options or
+    Neurolink Suit) read "5/6, not shown: SK_Lune_Placeholder". Its own body is left off
+    on purpose, so it is no longer counted; the log says "its own body left off (skin under the
+    outfit), not counted".
+  - Everything else matched the game's own look after each switch-off: every option of all 27
+    slots with Auto Wear, every slot worn by hand, the skin mods with the setting on and off, and
+    nine combinations.
+- The hitch line now names the steps of a pick (undo history, matched slots, writing
+  selection.txt). One pick in that run took 2.4 s there, and the line could only say "idle".
+- "Pieces on screen" no longer counts a piece nothing on the character's body uses as missing (a
+  texture only another character's skin uses, an outfit Blueprint that isn't the one worn). The
+  log says how many were left out. In game 17 Nov: Cheekier Chic "Lace lune-sleeves-barefoot" reads
+  7/7 instead of 7/8. A pick that shows nothing keeps its whole count. A body whose character
+  can't be told (an NPC) doesn't count for a character's pick.
+- A cutscene NPC that carries a party member's weapon was taken for that character (the
+  expeditioners counted as Gustave). An actor whose body shows a mesh is now told by that mesh.
+- Auto Wear no longer judges a pick by the pass before it. A look at a new character between a
+  pick and its pass, or a pick made while a pass was on its last actors, could find the pick's
+  mesh "not shown" and wear it over the outfit it was made for. It now waits for the pick's own
+  pass. Found by reading the code; tested in the mock.
+- While a pass is under way (it takes several loop ticks since the change below), the menu shows
+  the slot as it was and "<character> wears" as before the pass, instead of "not visible" and "not
+  in this area" for a moment.
+- A material the mod swaps on a battle, menu, companion or cutscene character is now also swapped
+  in that character's own list of material instances (the game drives effects through it). The
+  code meant to do this, but looked at nothing when the character had no owner, which is the
+  usual case. What this changes on screen is not known.
+- Of a variant's several meshes, the one Wear puts on is now the same in every game session (the
+  first outfit mesh in a-z order). It depended on Lua's table order.
+
+In-game menu, crash safety and logs:
+- The "new skin" line in live_log.txt read a new battle, companion or camp character's body by
+  property name. 1.3.1 stopped doing that everywhere else after the two camp crashes; this line
+  was missed. It now uses the component list.
+- dump.txt finds a character's skin component through the component list too, and now lists it
+  for characters without an owner (it never did: 1 of 83 actors in the 17 Oct dump).
+- If live_log.txt can't be renamed at game start (another program has it open), the last session
+  is copied to live_log_previous.txt before the new log starts. Before, it was lost.
+- More in live_log.txt, to check outfits from the log alone: "under it" (what the game had on each
+  slot when a mesh is worn over it), "now" (each slot once a body is back on its outfit), and after
+  every pass a "wears" line with what each character's body shows. dump.txt adds, per outfit actor,
+  the body its own Blueprint defines, and per body the component (with its address), the mod's
+  Wear record for it and the game's list of material copies.
+- commands.txt: `wear` with an unknown slot id says so instead of saving the id; `set trace` and
+  `set scoping` take effect at once. Lines may be up to 4000 characters (they were cut off at 300
+  without a word, so `set wear` with a whole Wear list did nothing); a longer one is logged.
+
+In-game menu:
+- The pass after a map load is spread over several frames (at most ~12 ms of work per loop tick)
+  instead of one long frame: at camp it took 244-259 ms for 48 actors (17 Oct) and 283 ms for 89
+  (18 Oct) in one go, a visible stutter. A character removed while the pass waits for its turn is
+  skipped. In the 19 Oct session the camp pass (70 actors, 203 ms of work) logged no long frame.
+- A map that loads while the previous map's pass is still waiting (camp right after the world
+  map) no longer gets that old pass 1-2 s after loading, before its own 6 s wait. Requests made
+  just before a map load now wait for it. Found while writing the book (ch 16), not confirmed in
+  game; the 17 Oct 14:52 camp crash fits this timing (a guess).
+- The mod now learns which character an outfit actor dresses from the game's skin component
+  ("component hook" lines in live_log.txt). The old way, by the outfit actor's owner, never
+  matched: outfit actors have no owner. With it, on the walking character:
+  - an outfit the game shows again without spawning it (switching the party leader back) is
+    dressed again, and cleaned again when Clean is on (seen in game 22 Oct: the hook fires);
+  - the walking character's own character comes from the outfit, not from its meshes (Sciel in
+    the game's Chic outfit wears a Lune mesh);
+  - a material the mod swaps on the outfit is also swapped in the game's list for the character.
+  In game on 23 Oct the hook found 16 outfits shown again; each was looked at again (a "game
+  re-assigned" line), and the pooled outfits had kept the mod's dressing, so nothing needed
+  changing. The re-clean and list update are tested in the mock only.
+- The 2 s companion watch no longer skips a class whose object lookup alone takes over its 8 ms
+  budget, and a class cut short goes on where it stopped. Seen in the test mock only.
+- The "on screen" count in live_log.txt no longer lists another character's assets as "not
+  shown" (Sciel's body textures in a Lune option); they are counted only when they show.
+- An empty texture link is no longer filled with a texture of a variant that is off (for example
+  a colour you picked earlier). The next pass took it out again and the fill put it back, so the
+  material was rebuilt on every pass. This also holds when you chose "the game's own" texture for
+  that link; if the game's texture isn't available, that link now stays empty instead of getting
+  a mod texture. Found in the test mock, not seen in a game log since 15 Oct.
+- An NPC whose class name only mentions a party member (such as BP_Cine_Lune_Mother_C) is no
+  longer taken for that character. Camp characters are still recognised by their skin component.
+- Outfit actors' parts are read by property first again, so a body part the game names at run
+  time keeps its "Body" label and Wear finds it (1.3.1 could miss it).
+
+Logs and reports (found while writing the book, chapters 17 and 19):
+- The minute's stats line counts BeginPlay calls in the minute they happened; after a long frame
+  they went into the next minute.
+- The watchdog's breadcrumb times were 1 ms early (the last step read "-1 ms").
+- report.txt no longer doubles line ends ("\r\r\n") in the files it bundles, and its "errors"
+  section no longer lists UE4SS offset names like ArIsError. Its "last 80 lines" held 81.
+- dump.txt starts with its date and the session it belongs to (reports bundle the latest dump,
+  which can be days old).
+- An outfit actor at an address a dead one had is recorded as new; the component hook checks the
+  objects by the names taken when it fired; the name Fix look sends is kept with the character's
+  full name. All three guard against reused addresses (tested in the mock).
+
+App and relocator:
+- Tests: the check that a class the mod never dresses is matched only once counted nothing (the
+  mock hid the count); the empty-slot tie rule had no test; the perf scenario "re-dress" gave skin
+  actors an owner, which they never have in game, so it measured no work. All three fixed.
+- Relocator: a new path is also checked against the game's own packages (before, only against the
+  run's and the wardrobe's). No clash was ever found; the check is cheap.
+- Game log: a stall after one that went on by itself (a load) is its own item. Before, a load and
+  a later freeze were one item reading "normal during a loading screen". An idle stall of 30 s or
+  more no longer calls itself normal, and a stall while the menu worked names "the last thing it
+  logged" instead of a second "last step" (the breadcrumb line is the call it was making).
+- The note "Two versions of one mod? Keep only one in the library." now says what happens and
+  covers both cases: only one copy of each shared file loads in game; an older download should
+  go, but two different mods (such as Fitting Outfits for Lune and for Sciel) can both stay, and
+  one may use the other's copy. The Compare dialog is now called "Same files in two mods".
+
+Tools:
+- e33legacy.split_number splits ten-digit FName numbers the way the engine does. No effect on
+  real mods (such names are made at run time, not cooked).
+
 ## 1.3.1
 
-Recommended UE4SS build: 3.0.1-1176 or newer (the first line of UE4SS.log says which one you
-have). 1125 still runs the menu; "Test: game dresses (B)" needs 1176.
+Recommended UE4SS build: 3.0.1-1176 or newer (the second line of UE4SS.log gives its Git SHA:
+1176 is 1ba38db4, 1125 is 527a483b). 1125 still runs the menu; "Test: game dresses (B)" needs 1176.
 
 In-game menu, crashes and freezes:
 - Crash at camp right after a fast travel (twice on 17 Oct, UE4SS 1176): UE4SS crashed inside its
@@ -68,11 +257,12 @@ In-game menu, speed:
   miss cost 13-27 ms, most of the 150-360 ms looks.
 - Within one frame the mod keeps what it has already read (texture lists, mesh paths, property
   types): a first look at a new character takes about half the engine calls, the pass after a map
-  load about a quarter.
+  load about a seventh (tests/perf/count_crossings.py, 1.3.0 against 1.3.1).
 - New characters get about 8 ms of the mod's time per frame; the four party-menu characters took
   95-309 ms each, all in one frame, after every map load.
-- The check the mod runs for every actor the game creates (thousands a minute in battle) reads
-  each class's name once instead of once per actor.
+- The check the mod runs for every actor the game creates (thousands a minute in battle) matches
+  each class against the party's class names once, not once per actor (the class name is still
+  read for the cache key).
 - Run-time named components are no longer looked up as Blueprint templates.
 
 In-game menu, logs (live_log.txt, report.txt):

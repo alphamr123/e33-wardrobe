@@ -67,6 +67,8 @@ The first menu key you press only shows the yellow focus ring; the next ones mov
   - `[lock]` after a name: the slot is locked (see [Choosing a variant](#choosing-a-variant)).
 - **What the value tells you**:
   - `… · worn`: the mod is worn in place of the character's outfit (see Auto Wear below).
+  - `… · skin under outfit`: a skin mod whose textures show on the outfit the character wears.
+    **Wear** on the row puts the skin mod's own body on instead.
   - `… · made for Potato bag` (orange): the mod replaces a different outfit than the one worn, so
     nothing shows yet. A **Wear** button on the row puts it on anyway.
   - `… · hidden`: another pick changes the same pieces and was picked later. **Bring to front** on
@@ -92,6 +94,15 @@ off (Settings), use the **Wear** button instead.
 
 Colours and other texture-only slots follow the outfit they were made for: a mod's colour shows on
 the outfit it belongs to.
+
+**Skin mods.** A skin mod is a base body with the body's textures and nothing else (a skin
+texture replacer, for example). Some outfit mods use the character's body textures for their skin parts and expect
+one. Pick it with any outfit, the game's or a mod's: its textures go under the outfit worn, the
+row reads `on · skin under outfit`, and Auto Wear leaves the outfit on. This holds for textures
+the outfit doesn't bring itself; an outfit with its own body texture keeps it. **Wear** on the
+skin mod's row puts its own body on instead of the outfit. To have skin mods only as their own
+body, as in 1.3.1, switch **Skin mods** off in Settings ("Auto Wear / skin mods under outfits").
+If an earlier version left a skin mod worn (`on · worn`), press **Unwear** on its row.
 
 ### Matched groups
 
@@ -144,8 +155,9 @@ same masks. How it works: [HOW_IT_WORKS.md](HOW_IT_WORKS.md#clean).
 ## Fix look
 
 If a character looks wrong, **Fix look** asks the game to dress everyone again (as re-equipping
-the outfit does) and then applies your picks again. Wear's memory of the original outfits is kept
-unless the game really re-dressed someone.
+the outfit does) and then applies your picks again. Wear's memory of the original outfits is
+kept. Material slots that the game's own outfit leaves empty are emptied again, in case a removed
+mod left something there.
 
 ## Peek
 
@@ -170,7 +182,7 @@ Kept in `settings.txt` next to the mod.
 | Apply to new skins automatically | on | Swap as soon as the game spawns a character (battle, cutscene, menu). Off: only menu changes, Fix look and Ctrl+F7 swap. |
 | Randomize may pick vanilla | off | Let Randomize / Random choose "off" for a slot. |
 | Keep a mod's groups matched | on | See [Matched groups](#matched-groups). |
-| Auto Wear | on | See [Outfit mods, Wear and Auto Wear](#outfit-mods-wear-and-auto-wear). |
+| Auto Wear / skin mods under outfits | on / on | Two buttons. **Auto Wear**: see [Outfit mods, Wear and Auto Wear](#outfit-mods-wear-and-auto-wear). **Skin mods**: a skin mod's textures go under the outfit worn (see Skin mods there); off: only as its own body (`skin_under` in settings.txt). |
 | Show technical slots (fix paks) | off | List Blueprint-only fix slots too. |
 | Slideshow / Peek seconds | 4 s / 3 s | Seconds per slideshow step (1-60); how long Peek hides the menu (1-15). |
 | Menu side / scale | right / 100 % | Left or right edge; 50-200 % in steps of 10. The menu also shrinks to fit small screens. |

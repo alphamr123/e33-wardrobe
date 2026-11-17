@@ -55,7 +55,7 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
 | `repair(problem_ids)` | Repairs those problems: missing option files: a `repair` job (only those options); shared pak: a reinstall; the menu's list: written again at once. `{ok, jobs:[id], menu: bool}` |
 | `reconcile()` | At app start: prepared folders on the wrong side of Disable (an enabled mod's files in the disabled folder, a disabled mod's files still in ~mods) are moved where they belong. Skipped while the game runs. `{ok, moved: [mods], errors: [sentences]}` |
 | `repair_option(mod_id, variant_id)` | The Game log's Repair button: a `repair` job for one option. `{ok, jobs:[id]}` |
-| `compare_mods(a, b)` | For "Two versions of one mod?": `{ok, mods: [{id, files (the downloads), version, uploaded, added, options, rows, size, state}] (2), shared: [paths]}`. Downloads are recorded from 1.3.0 on. |
+| `compare_mods(a, b)` | For the "same new files in two mods" note (Compare...): `{ok, mods: [{id, files (the downloads), version, uploaded, added, options, rows, size, state}] (2), shared: [paths]}`. Downloads are recorded from 1.3.0 on. |
 | `culprit(action, value)` | Find the problem mod. `action`: `"status"`, `"start"`, `"answer"` (`value` true: it still happens), `"finish"` (`value` true: keep the found mod off), `"forget"` (turn back on what it can, then end it anyway). `Culprit`; finish / forget also give `{errors, dropped, left}`. While it runs, Remove, Disable and Enable are refused for the mods it manages. |
 | `monitor_file(which, known)` | The logs of a game that has ended, read once through the same rules: `"last"` (live_log.txt + UE4SS.log), `"previous"` (live_log_previous.txt), `"ue4ss"` (UE4SS.log alone). `Monitor` plus `{which, exists, version, files:[paths], lines, menu_version, ue4ss_version}`; `tail` holds up to 5000 lines (for `"ue4ss"`, UE4SS.log's). `known`: the `version` the page has; when the files haven't changed the answer is only `{ok, unchanged: true, version, which}`. |
 | `problems_text()` | Plain text of the current problems, for pasting in a bug report. |
@@ -140,7 +140,7 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
   "notes": [ { "level": "warn" | "info", "text": "plain sentence naming the options or files",
                "items": ["Clea · Shorter Skirt (MI_X: 1 link)", ...],    // optional: the full list
                "what": "options" | "files",
-               "compare": "Other Mod" } ],               // optional: "Two versions of one mod?" (Compare...)
+               "compare": "Other Mod" } ],               // optional: same new files in two mods (Compare...)
   "disabled": false,
   "fixes": [ { "kind": "Texture rule" | "Material rule" | "Bundled" | "Menu rows", "text": "...", "sub": "...",
                "ref": { "kind": "texture" | "material" | "bundle" | "rows", ... } } ]   // for undo_fix
@@ -212,7 +212,9 @@ returns bigger ones (up to 2048 px). Game paths of files are package paths (`/Ga
   "ended": "21:10:44" | null,                  // newest line of either log
   "date": "2026-10-11" | null,                 // the date of that line
   "problems": [
-    { "key": "watchdog", "level": "error" | "warn" | "info", "title": "The game stopped responding for 9 s",
+    { "key": "watchdog-idle", "level": "error" | "warn" | "info", "title": "The game stopped responding for 9 s",
+      // keys include watchdog-idle / watchdog-work (a stall now) and watchdog-idle-went-on /
+      // watchdog-work-went-on (earlier stalls that ended by themselves)
       "detail": "The menu was idle, so the pause came from the game itself.", "hint": "...",
       "first": "21:05:01", "last": "21:06:10", "count": 3,
       "lines": ["21:05:01 WATCHDOG: ...", "21:06:10 WATCHDOG: ..."],

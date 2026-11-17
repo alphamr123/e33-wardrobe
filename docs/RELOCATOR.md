@@ -168,7 +168,7 @@ writes `variants.lua`, so edits survive Reinstall:
 - **Bundles**: files copied from another mod into a small container under
   `<UE4SS>\Mods\E33Wardrobe\bundles\`. The relocator treats it as part of the mod: links to
   those files resolve while it unpacks the mod, and the files go into the mod's shared pak.
-  Bundled files are not reported as "two versions of one mod".
+  Bundled files are not reported as the same new files in two mods' shared paks.
 
 Delete `fixes.json` to drop all edits; the next run (or Reload after the app rewrites the list)
 shows the mods as they come.

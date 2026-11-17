@@ -181,6 +181,8 @@ function RegisterKeyBind() end
 function RegisterConsoleCommandHandler(n, fn) CMD = fn end
 function RegisterBeginPlayPostHook(fn) BEGINPLAY = fn end
 HOOKS = {}
-function RegisterHook(name, pre, post) HOOKS[name] = post return 1, 2 end
+-- the callback that runs after the function: the post-hook of a native one, the only callback of a
+-- Blueprint one (UE4SS runs a script hook's first callback after the function)
+function RegisterHook(name, pre, post) HOOKS[name] = post or pre return 1, 2 end
 function RegisterLoadMapPreHook(fn) MAP_PRE = fn end
 function RegisterLoadMapPostHook(fn) MAP_POST = fn end

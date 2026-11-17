@@ -61,7 +61,12 @@ S_CharacterCustomizationItemData { CharacterSkin : Name, CharacterFace : Name } 
   CharacterName, Class)`, `AssignBodySkinAsync`, the Face and BodyAndFace versions, and the
   delegates `OnBodySkinAssigned`, `OnFaceSkinAssigned`, `OnSkinAssignCompleted`. The subclass
   `CSAP_SwapAssign` has a `CachePoolSize`, so skin actors can be pooled and re-shown without a new
-  BeginPlay.
+  BeginPlay. Confirmed 22 Oct (handoff report 2026-10-22_component_hook_test): switching the party
+  leader back to Lune showed her existing skin actor again, no spawn. Skin actors have no owner
+  (209 of 209 traced); `BP_CharacterSkinComponent_C:OnSkinAssignCompleted(NewBodySkinObject,
+  NewFaceSkinObject)` names them, and the component's owner is the character. On battle, menu,
+  companion and cutscene pawns (`CSAP_AssetAssign`) the outfit is copied onto the pawn's own mesh
+  and the skin actor is gone a tick later.
 - In game, the visible party member in exploration is `BP_jRPG_Character_World_C`, and its `Body`
   component **is** the skin actor's `Body`. The AI companion pawn
   (`BP_Pawn_AICompanion_<Char>_C`) shows its outfit on `CharacterMesh0`, and the menu has its
@@ -179,7 +184,8 @@ so a game update can't break the menu's assets.
 - **Stellar Blade's CNS** [R19], the model for the in-game part: a UE4SS Lua mod plus a UMG menu,
   with outfits described in JSON. Its **CNS Repacker** [R20] relocates with retoc and UAssetGUI to
   longer paths and copies the chain of vanilla parents that reference modded assets. E33 Wardrobe
-  uses same-length paths instead, so headers don't need re-serialising.
+  uses same-length paths instead: header offsets don't move (unless a name has to be added to a
+  name map, which the relocator handles) and export data is never re-serialised.
 
 ## Roadmap: native wardrobe entries
 

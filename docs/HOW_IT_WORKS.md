@@ -94,10 +94,14 @@ they are.
 An outfit in E33 is a **separate actor**: a skin Blueprint (subclass of
 `BP_CharacterSkinBase_C`) that the character's `BP_CharacterSkinComponent_C` spawns through the
 native `CharacterSkinAssignPolicy`. It is spawned on every outfit change, battle, cutscene and
-menu preview; with the pooling policy `CSAP_SwapAssign` an existing actor can also be
-re-assigned without a new BeginPlay. So hooking actor BeginPlay plus the policy's
-`AssignBodySkin` / `AssignFaceSkin` / `AssignBodyAndFaceSkin` (and their `Async` versions), and
-editing the spawned actor's components, reaches every appearance of a character. Details:
+menu preview; with the pooling policy `CSAP_SwapAssign` (the walking character) an existing actor
+is also shown again without a new BeginPlay (PC 22 Oct: party leader switched back to Lune). Skin
+actors have no owner, so the mod learns which character a skin actor dresses from the skin
+component's own handler `OnSkinAssignCompleted` (a Blueprint hook): it names the skin and face
+actors, and the component's owner is the character. A known skin shown again is looked at again.
+Hooking actor BeginPlay, that handler and the policy's `AssignBodySkin` / `AssignFaceSkin` /
+`AssignBodyAndFaceSkin` (and their `Async` versions), and editing the spawned actor's
+components, reaches every appearance of a character. Details:
 [RESEARCH.md](RESEARCH.md#the-outfit-pipeline).
 
 ## Runtime swapping
@@ -153,9 +157,11 @@ What the mod reads is limited to what is safe to read:
 
 - Skin actors (`BP_CharacterSkinBase_C`), face actors (`BP_CharacterFaceBase_C`) and cutscene
   pawns (`BP_CineCharacter_Main_C`) are found by class.
-- Body mods replace the base body `SK_<Character>_Placeholder`, which is shown by world and menu
-  pawns that are not skin actors. Those are found by the meshes they show; their classes are
-  remembered for later spawns, and the scan is repeated once after each level load.
+- Body mods replace `SK_<Character>_Placeholder`, the character's default-outfit mesh (with its
+  coat, top, belt and pants materials). The default skin actor shows it (`BP_CharacterSkinBase_<Char>`
+  imports it), and so do world and menu pawns that are not skin actors. Those are found by the
+  meshes they show; their classes are remembered for later spawns, and the scan is repeated once
+  after each level load.
 - A slot belongs to the character named in its slot name (`Lune outfit`, `Sciel color`), else
   in its mod's name, else in the paths of the assets it replaces. It only touches that
   character. If the mod can't tell whose skin an actor is, only slots without a character
@@ -177,14 +183,52 @@ Otherwise a mod made for another outfit would change that outfit's skin textures
 looks would mix. If two variants ship the same asset and the later one doesn't fit, the earlier
 one's version is used.
 
+One exception: a **skin mod**, a variant whose only meshes are base bodies
+(`SK_<Character>_Placeholder`) and whose textures and materials are all the body's or the skin's
+by name ("body" or "skin" in the file name; `Wear.isSkinMod`). Costume mods replace the base body
+too; one that also brings belt, coat or pants textures is an outfit. On whatever outfit the body
+shows, the game's or a mod's, a skin mod still gives its textures and materials, for every asset
+no picked variant of that outfit brings. This is what installing it as a replacer shows, and
+some outfit mods are built for it (their skin parts use the game's body textures). It never lends
+its mesh or animation Blueprint (`forOutfit` in main.lua). `skin_under = false` in settings.txt
+(Settings > Skin mods) turns this off; then a skin mod only shows as its own body.
+
 **Wear** puts a variant's mesh on the character's body in place of whatever outfit is worn. The
-body is one mesh, so the two never layer. The outfit that was on before is remembered (mesh and
-the game's material setup), also while you switch between worn variants, and comes back on
-Unwear. A skin actor that still shows a leftover worn mesh goes back to its own outfit by itself.
+body is one mesh, so the two never layer. The outfit that was on before is remembered per body
+and character (mesh and the game's material on each slot, the "Wear record"), also while you
+switch between worn variants and through Fix look, and comes back on Unwear. For each of the
+game's dynamic material copies the record also keeps its parent and settings: the game frees
+copies that nothing else holds (on hidden outfit actors, within seconds), and Unwear then builds
+a new copy with the same parent and settings. The walking
+character's body is one component the game moves between the party pawn and the outfit actors,
+so a record is matched by the component's address, its own name and the character, not its full
+path. An outfit actor that still shows a leftover worn mesh with no record goes back to its own
+outfit by itself: its Blueprint's mesh, every slot cleared, then what the Blueprint sets and the
+game's own material copies where the game still holds them. Empty slots of the game's own meshes
+stay empty (only a mod's mesh gets its empty slots filled). When a mod's mesh comes off without a
+record (the pick replaced the game's mesh itself, no Wear), a slot the game's mesh ships empty is
+emptied if what it holds came from the mod's mesh or a variant: the game makes its own copies of
+the mod mesh's materials, and following the game's mesh does nothing where it has no material
+(Sciel's `lambert1` kept a skin mod's scarf material, 17 Nov). A material the game put there
+itself stays.
+
+An option that brings an outfit's own Blueprint (a "fix" option, or an outfit mod with its own
+Blueprint) puts that Blueprint's parts on the outfit actor: each part's mesh and the materials
+the Blueprint sets on it, which stay even when the mesh is another one. A part whose mesh came
+from such a Blueprint is noted (`Wear.bp`); when the option is switched off, the part goes back to
+the live outfit Blueprint's own mesh and materials.
+
+**Pieces on screen** (the "on screen" line and the menu's "n/m pieces") count a pick's showable
+assets that the last pass put on a body. An asset nothing on that character's bodies uses (a
+texture only another character's skin uses, an outfit Blueprint that isn't the one worn) is left
+out, unless nothing of the pick shows at all. A skin mod shown under the outfit worn leaves its
+own body off on purpose; that body is not counted either.
 
 **Auto Wear** (on by default) switches Wear on after the pass that follows a pick, if the picked
-variant's mesh shows nowhere on its character. It waits until the character is loaded. An
-explicit Unwear is respected until the slot is picked again.
+variant's mesh shows nowhere on its character. It waits until the character is loaded, and for
+the pick's own pass (not a look at a new character in between). A skin mod whose textures show
+under the outfit worn is left as it is. An explicit Unwear is respected until the slot is picked
+again.
 
 ## Matched groups
 
@@ -222,7 +266,11 @@ does when an outfit is equipped. It takes one parameter, `Name "Character Name"`
 the parameter list from the function at runtime, and passes the name the game itself used when
 it last assigned that character's skin (recorded by the `CharacterSkinAssignPolicy` hook), or a
 cutscene component's `CharacterHardcodedName`. The current picks are applied again 0.8 s later.
-Wear's memory of the original outfits is only cleared if the game really re-dressed someone.
+The Wear records stay: the game re-dresses only the character it shows, and a kept outfit comes
+back as it was left. In that pass, a party character's body on its outfit's own (game) mesh also
+gets its empty slots emptied: the game sets only the slots it knows, so a leftover there survived
+its re-dress. Cutscene NPCs are left alone (looking up their Blueprints' parts costs ~17 ms each).
+Slots the outfit's Blueprint sets keep their material.
 
 ## Threading model
 

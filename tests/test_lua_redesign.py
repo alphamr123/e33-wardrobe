@@ -530,6 +530,9 @@ def main():
         local a = new(cn, "/Game/Map.PersistentLevel." .. cn .. "_" .. (500 + i))
         a._class = cls
         local o = IN_GT; IN_GT = true; BEGINPLAY({ get = function() return a end }); IN_GT = o
+        WATCHA[cn] = a
+        -- alive() asks; counted only right after the watch's own scan of that class
+        a._f.HasAnyFlags = function() if WATCHING and LASTFIND == cn then LOOKED[cn] = true end return false end
       end
       WATCHED = {}
       local realFind, realClock, extra = FindAllOf, os.clock, 0
@@ -538,31 +541,73 @@ def main():
         if type(name) == "string" and (name:find("_Battle_C$") or name:find("^BP_Pawn_")) then
           table.insert(WATCHED, name)
           extra = extra + 0.010                                  -- a slow full object scan
-          return {}
+          LASTFIND = name
+          return { WATCHA[name] }
         end
+        LASTFIND = nil
         return realFind(name)
       end
-    ''')
+    '''.replace('for i, cn in ipairs', 'WATCHA, LOOKED = {}, {}\n      for i, cn in ipairs', 1))
     rounds = []
+    L.execute('WATCHING = true')
     for _ in range(3):
         L.execute('WATCHED = {}')
         G.tickGT(40)
         rounds.append(list(L.eval('WATCHED').values()))
     check('the companion watch: one slow class scan per round, the next round goes on with the next class',
           all(len(r) == 1 for r in rounds) and len({r[0] for r in rounds}) == 3, rounds)
+    # book ch 16: the budget was checked before each actor, so a scan over 8 ms meant that class's
+    # actors were never looked at
+    looked = sorted(L.eval('LOOKED').keys())
+    check('  a class whose scan alone takes over the budget still gets its actors looked at',
+          len(looked) == 3, looked)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # ... and a class with more actors than one round can look at goes on where it stopped
+    tmp, L, G, live = load()
+    G.tickGT(80)
+    L.execute('''
+      MANY, SEENA = {}, {}
+      local cn = "BP_Pawn_AICompanion_Many_C"
+      local cls = new("BlueprintGeneratedClass", "/Game/Battle/BP_Pawn_AICompanion_Many." .. cn)
+      cls._super = { GetFName = function() return FName("Character") end, IsValid = function() return true end,
+                     GetSuperStruct = function() return nil end }
+      local realClock, extra = os.clock, 0
+      os.clock = function() return realClock() + extra end
+      for i = 1, 3 do
+        local a = new(cn, "/Game/Map.PersistentLevel." .. cn .. "_" .. (600 + i))
+        a._class = cls
+        a._f.HasAnyFlags = function() if WATCHING and LASTFIND then SEENA[i] = true; extra = extra + 0.005 end return false end
+        MANY[i] = a
+      end
+      local o = IN_GT; IN_GT = true; BEGINPLAY({ get = function() return MANY[1] end }); IN_GT = o
+      local realFind = FindAllOf
+      FindAllOf = function(name)
+        if name == cn then extra = extra + 0.010; LASTFIND = true; return { MANY[1], MANY[2], MANY[3] } end
+        LASTFIND = nil
+        return realFind(name)
+      end
+    ''')
+    L.execute('WATCHING = true')
+    G.tickGT(200)
+    seen = sorted(L.eval('SEENA').keys())
+    check('  a class with more actors than one round allows goes on where it stopped (all 3 looked at)',
+          seen == [1, 2, 3], seen)
     shutil.rmtree(tmp, ignore_errors=True)
 
     # PC 17 Oct: ~6000 BeginPlays a minute in battle, nearly all of classes the mod never dresses
     # (projectiles, effects): their class name is checked once per class, not once per actor
     tmp, L, G, live = load(settings='b_swap = param\n')
     G.tickGT(80)
+    # (book ch 18: the class was made with new(), whose GetFName the mock's own method shadows, so the
+    # count was always 0 and the check held whatever the caches did)
     n_names = L.execute('''
       local base = { GetFName = function() return FName("Actor") end, IsValid = function() return true end,
                      GetSuperStruct = function() return nil end }
       local names = 0
-      local cls = new("BlueprintGeneratedClass", "/Game/FX/BP_FreeAimProjectile_Battle.BP_FreeAimProjectile_Battle_C", {},
-                      { GetFName = function() names = names + 1; return FName("BP_FreeAimProjectile_Battle_C") end })
-      cls._super = base
+      local cls = { IsValid = function() return true end, GetAddress = function() return 990001 end,
+                    GetSuperStruct = function() return base end,
+                    GetFName = function() names = names + 1; return FName("BP_FreeAimProjectile_Battle_C") end }
       for i = 1, 40 do
         local a = new("BP_FreeAimProjectile_Battle_C", "/Game/Map.PersistentLevel.BP_FreeAimProjectile_Battle_C_" .. i)
         a._class = cls
@@ -570,8 +615,8 @@ def main():
       end
       return names
     ''')
-    check('40 BeginPlays of a class the mod never dresses: its name is read about once per actor, not more',
-          n_names <= 45, n_names)
+    check('40 BeginPlays of a class the mod never dresses: its name is read for the class key only '
+          '(twice per actor), not checked again', 40 <= n_names <= 85, n_names)
     shutil.rmtree(tmp, ignore_errors=True)
 
     # fix15: battle and companion characters are known by their class names (passes don't run when a

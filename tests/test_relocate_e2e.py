@@ -449,8 +449,8 @@ def main():
           rc == 0 and not r1.get('unresolved') and '/game/materials/mi_gonecube' in sh1.get('packages', []), (r1.get('notes'), sh1))
     rc, log12 = run(reloc3 + ['--mod', os.path.join(lib3, 'Donor')])
     reg3 = json.load(open(os.path.join(lua3, 'wardrobe_registry.json')))
-    check('  a bundled file in both mods\' shared paks is not reported as "two versions of one mod"',
-          rc == 0 and 'Two versions' not in log12 and e33_relocate.shared_clashes(reg3) == {}
+    check('  a bundled file in both mods\' shared paks is not reported as the same new files in two mods',
+          rc == 0 and 'mod-only asset path' not in log12 and e33_relocate.shared_clashes(reg3) == {}
           and next(m for m in reg3 if m['name'] == 'Needy').get('bundled') == ['/game/materials/mi_gonecube'], log12[-400:])
     vl = lambda: open(os.path.join(lua3, 'Scripts', 'variants.lua'), encoding='utf-8').read()  # noqa: E731
     dis = os.path.join(e33fixes.disabled_root(game), 'Needy')

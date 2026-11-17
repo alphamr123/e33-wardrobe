@@ -828,7 +828,83 @@ def main():
     key('C+F8')
     check('a look saved before a slot was split per character moves to that character\'s slot (others dropped)',
           favs() == [('Lune', 'Costume', 'K/main@Lune', 'K/a@Lune')], favs())
-    base.av_check(check, [L])
+    # ---- a skin mod (a base body plus the body's texture, nothing else) picked with a mod outfit that brings no
+    # body texture of its own: the row says it is the skin under the outfit and still offers Wear
+    # (Nexus comment, Nov 2026: "either the skin texture or the outfit")
+    tmp2 = tempfile.mkdtemp(prefix='e33menu_')
+    scripts2 = os.path.join(tmp2, 'E33Wardrobe', 'Scripts')
+    os.makedirs(scripts2)
+    for f in ('main.lua', 'menu.lua'):
+        shutil.copy(os.path.join(SCRIPTS, f), scripts2)
+    open(os.path.join(scripts2, 'variants.lua'), 'w').write('''return {
+  { mod = "Composite", slots = {
+    { id = "X/main", label = "Composite: Lune outfit", character = "Lune", variants = {
+      { id = "X/a", label = "A", map = {
+        ["/Game/Characters/Lune/Chic/SK_Lune_Chic"] = { "/Game/Characters/ZWCOMP/Chic/SK_Lune_Chic", "SK_Lune_Chic", "SkeletalMesh" } } } } } } },
+  { mod = "Lune Skin Light", slots = {
+    { id = "Lune Skin Light/Main", label = "Lune Skin Light: Main", character = "Lune", variants = {
+      { id = "Lune Skin Light/", label = "", map = {
+        ["/Game/Characters/Lune/Body/SK_Lune_Placeholder"] = { "/Game/Characters/ZWSKIN/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder", "SkeletalMesh" },
+        ["/Game/Characters/Lune/Body/Lune_Body_BaseColor"] = { "/Game/Characters/ZWSKIN/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor", "Texture2D" } } } } } } },
+}
+''')
+    L2 = lua54.LuaRuntime(unpack_returned_tuples=True)
+    L2.execute(base.MOCK)
+    L2.execute(UMG_MOCK)
+    body2, _a2 = L2.execute(base.SCENARIO)
+    L2.execute('''
+      asset("Texture2D", "/Game/Characters/Lune/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor")
+      asset("Texture2D", "/Game/Characters/ZWSKIN/Body/Lune_Body_BaseColor", "Lune_Body_BaseColor")
+      asset("MaterialInstanceConstant", "/Game/Characters/Lune/Body/MI_Body_Lune", "MI_Body_Lune",
+        { TextureParameterValues = TArray({ { ParameterInfo = { Name = FName("BaseColor") },
+            ParameterValue = get("/Game/Characters/Lune/Body/Lune_Body_BaseColor.Lune_Body_BaseColor") } }) })
+      for _, m in ipairs({ { "/Game/Characters/ZWCOMP/Chic/SK_Lune_Chic", "SK_Lune_Chic" },
+                           { "/Game/Characters/ZWSKIN/Body/SK_Lune_Placeholder", "SK_Lune_Placeholder" } }) do
+        asset("SkeletalMesh", m[1], m[2],
+          { Materials = TArray({ { MaterialInterface = get("/Game/Characters/Lune/Body/MI_Body_Lune.MI_Body_Lune") } }) })
+      end
+    ''')
+    L2.eval('function(src, name) local f, e = load(src, name); if not f then error(e) end; return f end')(
+        open(os.path.join(scripts2, 'main.lua'), encoding='utf-8').read(), '@' + os.path.join(scripts2, 'main.lua'))()
+    G2 = L2.globals()
+    mesh2 = lambda: L2.eval('function(b) return b._mesh._path end')(body2)  # noqa: E731
+    G2.key('DEL')
+    G2.click('On', 'Outfit · Composite')
+    G2.runLoops(2)
+    G2.click('On', 'Skin Light')
+    G2.runLoops(3)
+    check('a skin mod under a mod outfit: the outfit stays on and the row says "skin under outfit"',
+          mesh2().startswith('/Game/Characters/ZWCOMP/') and G2.rowValue('Skin Light') == 'on · skin under outfit',
+          (mesh2(), G2.rowValue('Skin Light')))
+    check('  the status line says where its textures show and what Wear would do',
+          'its skin textures show under Chic; Wear puts its own body on instead' in G2.textsShown(), G2.textsShown()[:300])
+    check('  Wear is offered on its row, not on the outfit\'s',
+          G2.findBtn('Wear', 'Skin Light') is not None and G2.findBtn('Wear', 'Outfit · Composite') is None,
+          [b.cap for b in G2.screen().values()])
+    G2.click('Wear', 'Skin Light')
+    G2.runLoops(2)
+    check('  Wear puts the skin mod\'s own body on', mesh2().startswith('/Game/Characters/ZWSKIN/')
+          and G2.rowValue('Skin Light') == 'on · worn', (mesh2(), G2.rowValue('Skin Light')))
+    G2.click('Unwear', 'Skin Light')
+    G2.runLoops(2)
+    check('  Unwear: the outfit again, the skin mod under it', mesh2().startswith('/Game/Characters/ZWCOMP/')
+          and G2.rowValue('Skin Light') == 'on · skin under outfit', (mesh2(), G2.rowValue('Skin Light')))
+    # Settings: skin mods under outfits can be switched off (then as 1.3.1: only as its own body)
+    G2.click('Settings')
+    row0 = G2.rowValue('Auto Wear / skin mods')
+    G2.click('Skin mods', 'Auto Wear / skin mods')
+    G2.runLoops(3)
+    row1 = G2.rowValue('Auto Wear / skin mods')
+    st2 = open(os.path.join(tmp2, 'E33Wardrobe', 'settings.txt'), encoding='utf-8').read()
+    G2.click('Outfits')
+    G2.runLoops(2)
+    check('Settings > Skin mods switches "skin mods under outfits" off: saved, and the skin mod no longer shows '
+          'under the outfit', row0 == 'ON / ON' and row1 == 'ON / OFF' and 'skin_under = false' in st2
+          and G2.rowValue('Skin Light') == 'on · made for base body' and mesh2().startswith('/Game/Characters/ZWCOMP/'),
+          (row0, row1, G2.rowValue('Skin Light'), mesh2()))
+    shutil.rmtree(tmp2, ignore_errors=True)
+
+    base.av_check(check, [L, L2])
     shutil.rmtree(tmp, ignore_errors=True)   # Windows: the Lua state still holds live_log.txt open
     print(f'\n{fails} failure(s)')
     return 1 if fails else 0

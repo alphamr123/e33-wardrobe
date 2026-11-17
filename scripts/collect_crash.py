@@ -12,11 +12,13 @@ old one becomes live_log_previous.txt, which is collected too). What it does:
   * copies UE4SS.log, the mod's live_log.txt / live_log_previous.txt / settings.txt /
     selection.txt / report.txt / dump.txt, and ReShade.log / ClairObscurFix.log from Win64;
   * runs scripts/analyze_dump.py on the dump (UE4SS frames named with UE4SS.pdb) into analysis.txt,
-    and prints the exception and the mod's last steps before the watchdog line.
+    and prints the exception and the stall the mod's log ends in: the WATCHDOG line and the mod's last
+    steps after it (or the log's last lines when it doesn't end in a stall).
 Default --out: handoff/reports in this repository (git-ignored, never pushed).
 """
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +47,31 @@ def newest_dump(win64):
     if local:
         cands += glob.glob(os.path.join(local, 'Sandfall', 'Saved', 'Crashes', '*', '*.dmp'))
     return max(cands, key=os.path.getmtime) if cands else None
+
+
+# lines only the mod's game-thread loop writes: one after a WATCHDOG line means the game went on
+_LOOP = re.compile(r'^\S+ #\d+ (WATCHDOG: the game thread ran again|hitch: |stats \(|pass \(|key )')
+_SINCE = re.compile(r'\(since ([^)]*)\)')
+
+
+def end_of_log(lines):
+    """(what, lines): the stall the live log ends in, from its first WATCHDOG line with the mod's last
+    steps after it (and the log's last line), or the last lines when the log doesn't end in a stall.
+
+    Book ch 20: this showed the region around the last WATCHDOG line, wherever it was, so a crash with
+    no watchdog line got an older stall that went on, and a long stall got its repeats, not the steps.
+    """
+    wd = [i for i, x in enumerate(lines) if 'WATCHDOG: the game thread has not run' in x]
+    if wd and not any(_LOOP.match(x) for x in lines[wd[-1] + 1:]):
+        m = _SINCE.search(lines[wd[-1]])
+        same = [i for i in wd if m and m.group(0) in lines[i]] if m else []
+        i = same[0] if same else wd[-1]
+        j = i + 1
+        while j < len(lines) and re.match(r'^\S+ #\d+ (WATCHDOG: last mod step|\s*step )', lines[j]):
+            j += 1
+        block = lines[i:j][:50] + (lines[-1:] if j < len(lines) else [])
+        return 'the stall the log ends in (watchdog)', block
+    return 'the log does not end in a stall; its last lines', lines[-8:]
 
 
 def main(argv=None):
@@ -110,15 +137,15 @@ def main(argv=None):
                            encoding='utf-8', errors='replace')
         with open(os.path.join(out, 'analysis.txt'), 'w', encoding='utf-8') as f:
             f.write(p.stdout + p.stderr)
+        # analyze_dump labels the game thread "GameThread (thread 0, ...)" (book ch 20: "game thread" matched nothing)
         print('\n' + '\n'.join(x for x in p.stdout.splitlines() if 'ACCESS_VIOLATION' in x or 'exception' in x.lower()
-                               or x.startswith('game thread'))[:2000])
+                               or x.startswith(('GameThread', 'game thread')))[:2000])
     live = os.path.join(out, 'live_log.txt')
     if os.path.isfile(live):
         with open(live, encoding='utf-8', errors='replace') as f:
             lines = f.read().splitlines()
-        wd = [i for i, x in enumerate(lines) if 'WATCHDOG: the game thread has not run' in x]
-        tail = lines[max(0, wd[-1] - 3):wd[-1] + 6] if wd else lines[-8:]
-        print('\nthe mod\'s log at the end' + (' (watchdog)' if wd else '') + ':\n  ' + '\n  '.join(x[:200] for x in tail))
+        what, tail = end_of_log(lines)
+        print(f'\nthe mod\'s log at the end: {what}:\n  ' + '\n  '.join(x[:200] for x in tail))
     return 3 if locked else 0
 
 

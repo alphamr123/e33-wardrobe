@@ -110,6 +110,9 @@ def game_path(mount_point, rel):
     if parts[0] == 'Engine' and len(parts) > 2 and parts[1] == 'Content':
         return '/Engine/' + '/'.join(parts[2:])
     if 'Plugins' in parts and 'Content' in parts:
+        # a guess from the folder: wrong for nested plugin folders (Interchange/Runtime -> /Runtime,
+        # really /Interchange) and renamed ones (ALS-Community-main, really /ALSV4_CPP). Only /Game/
+        # paths matter to the relocator, so it is left as is.
         i = parts.index('Content')
         return '/' + parts[i - 1] + '/' + '/'.join(parts[i + 1:])
     if len(parts) >= 3 and parts[1] == 'Content':

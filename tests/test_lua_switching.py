@@ -99,7 +99,7 @@ tex("/Game/Characters/Lune/Body/T_Body_D"); tex("/Game/Characters/Lune/Body/T_Bo
 tex("/Game/Characters/Lune/Body/T_Top_D"); tex("/Game/MetaHumans/BTLS_Textures/Main_Characters/Lune_Body_BTLS")
 tex("/Game/ZWRED0001/Lune/Body/T_Body_D"); tex("/Game/ZWBLUE001/Lune/Body/T_Body_D")
 tex("/Game/ZWDIRT001/MetaHumans/BTLS_Textures/Main_Characters/Lune_Body_BTLS")
-tex("/Game/ZWOUT0001/Lune/Body/T_Body_D-nude")
+tex("/Game/ZWOUT0001/Lune/Body/T_Body_D-alt")
 asset("Texture2D", "/Game/ZWBLUE001/Lune/Body/T_Body_D-x", "T_Body_D-x")      -- loaded only by a test below
 local MASK = "/Game/MetaHumans/BTLS_Textures/Main_Characters/Lune_Body_BTLS"
 local function mat(kind, pkg, obj, list, parent)
@@ -224,7 +224,7 @@ MEMO_VARIANTS = r"""return { { mod = "Perf", slots = {
     { id = "P/out", label = "out", map = {
       ["/Game/Characters/Lune/Chic/SK_Lune_Chic"] = { "/Game/ZWOUT0001/Lune/Chic/SK_Lune_Chic", "SK_Lune_Chic", "SkeletalMesh" },
       ["/Game/Mods/Out/MI_Mod"] = { "/Game/Mods/Out/MI_Mod", "MI_Mod", "MaterialInstanceConstant", false },
-      ["/Game/Characters/Lune/Body/T_Body_D-nude"] = { "/Game/ZWOUT0001/Lune/Body/T_Body_D-nude", "T_Body_D-nude", "Texture2D" } } } } },
+      ["/Game/Characters/Lune/Body/T_Body_D-alt"] = { "/Game/ZWOUT0001/Lune/Body/T_Body_D-alt", "T_Body_D-alt", "Texture2D" } } } } },
   { id = "P/color", label = "Perf: Lune color", character = "Lune", variants = {
     { id = "P/red", label = "red", map = {
       ["/Game/Characters/Lune/Body/T_Body_D"] = { "/Game/ZWRED0001/Lune/Body/T_Body_D", "T_Body_D", "Texture2D" } } },
@@ -338,7 +338,7 @@ def memo_white_box(check):
     G = L.globals()
     G.settle()
     L.execute(UPVAL)
-    L.execute('TRACE_T = UPVAL("TRACE"); ON_ASSIGNED = UPVAL("onAssigned"); KNOWN = UPVAL("KNOWN_SKINS")')
+    L.execute('TRACE_T = UPVAL("TRACE"); SPAWN_T = UPVAL("SPAWN"); FIX_T = UPVAL("Fix"); KNOWN = UPVAL("KNOWN_SKINS")')
     gt = G.API_OUT.gt
     # outside game-thread calls nothing is kept; inside, it goes when the call ends
     gt(L.eval('function() INSIDE = TRACE_T.memo ~= nil end'))
@@ -392,26 +392,172 @@ def memo_white_box(check):
           G.STREAMING is None and G.GA_STREAMING == 0, (G.STREAMING, G.GA_STREAMING))
     check('  the mod\'s own relocated asset: GetAsset straight away, no StaticFindObject',
           G.OWN is not None and G.OWN_SFO == 0, (G.OWN, G.OWN_SFO))
-    # the game names a skin's character mid-call (policy hook -> onAssigned): asked again in the
-    # same call, the skin has that character, not the "unknown" kept a moment before
+    # the skin component's hook links a skin to its character mid-call (SPAWN.linked): asked again
+    # in the same call, the skin and the walking character have that character, not the "unknown"
+    # kept a moment before
     L.execute(r"""
       NOCLS = new("BlueprintGeneratedClass", "/Game/Characters/Skins/BP_Skin_Any.BP_Skin_Any_C")
       NOCLS._super = { GetFName = function() return { ToString = function() return "BP_CharacterSkinBase_C" end } end,
                        IsValid = function() return true end, GetSuperStruct = function() return nil end }
       OWN = new("BP_jRPG_Character_World_C", "/Game/Map.PersistentLevel.BP_jRPG_Character_World_C_7")
-      ANY = new("BP_Skin_Any_C", "/Game/Map.PersistentLevel.BP_Skin_Any_C_7", {}, { GetOwner = function() return OWN end })
+      ANY = new("BP_Skin_Any_C", "/Game/Map.PersistentLevel.BP_Skin_Any_C_7")     -- no owner, as in game
       ANY._class = NOCLS
-      OWN_NAME = OWN:GetFullName():match("^%S+%s+(.+)$")
-      KNOWN[ANY:GetAddress()] = { a = ANY, name = ANY:GetFullName(), owner = OWN_NAME }
+      SKINCOMP = new("BP_CharacterSkinComponent_C", OWN._path .. ".BP_CharacterSkinComponent", {},
+                     { GetOwner = function() return OWN end })
     """)
     gt(L.eval('''function()
         local characterOf = UPVAL("characterOf")
-        CHAR_BEFORE = characterOf(ANY)
-        ON_ASSIGNED(OWN_NAME, "Sciel")
-        CHAR_AFTER = characterOf(ANY)
+        CHAR_BEFORE, OWN_BEFORE = characterOf(ANY), characterOf(OWN)
+        FIX_T.noteName(OWN, "Sciel")                 -- the policy post-hook: the game's name for OWN
+        SPAWN_T.linked(SKINCOMP, ANY, nil)
+        CHAR_AFTER, OWN_AFTER = characterOf(ANY), characterOf(OWN)
       end'''))
-    check('memo: a character the game names mid-call is used at once (not the one kept before)',
-          G.CHAR_BEFORE is None and G.CHAR_AFTER == 'Sciel', (G.CHAR_BEFORE, G.CHAR_AFTER))
+    check('memo: a character the skin component\'s hook names mid-call is used at once (not the one kept before)',
+          G.CHAR_BEFORE is None and G.CHAR_AFTER == 'Sciel' and G.OWN_AFTER == 'Sciel',
+          (G.CHAR_BEFORE, G.CHAR_AFTER, G.OWN_BEFORE, G.OWN_AFTER))
+    # book ch 10/Part III editor: replaceTracked looked for the game's instance lists through the
+    # skin actor's owner, which it never has; now through the character the hook linked it to
+    gt(L.eval(r'''function()
+        local function pr(cls, name) return { GetClass = function() return { GetFName = function() return FName(cls) end } end,
+                                             GetFName = function() return FName(name) end } end
+        local scCls = new("BlueprintGeneratedClass",
+          "/Game/Gameplay/CharacterCustomization/Blueprints/BP_CharacterSkinComponent.BP_CharacterSkinComponent_C")
+        scCls._f.ForEachProperty = function(self, cb) cb(pr("ArrayProperty", "CurrentCharacterSkinMaterialInstances")) end
+        REGSET(scCls._path, scCls)
+        OLDMID = new("MaterialInstanceDynamic", "/Game/Map.PersistentLevel.BP_Skin_Two_C_8.Body.Material_Peau")
+        NEWMID = new("MaterialInstanceDynamic", "/Game/Map.PersistentLevel.BP_Skin_Two_C_8.Body.MID_1")
+        LIST = { OLDMID }
+        local arr = setmetatable({}, {
+          __index = function(_, k)
+            if k == "GetArrayNum" then return function() return #LIST end end
+            if k == "IsValid" then return function() return true end end
+            if type(k) == "number" then return LIST[k] end
+          end,
+          __newindex = function(_, k, v) LIST[k] = v end })
+        local pawn
+        local sc = new("BP_CharacterSkinComponent_C", "/Game/Map.PersistentLevel.BP_jRPG_Character_World_C_8.BP_CharacterSkinComponent",
+                       { CurrentCharacterSkinMaterialInstances = arr }, { GetOwner = function() return pawn end })
+        sc._class = scCls
+        pawn = new("BP_jRPG_Character_World_C", "/Game/Map.PersistentLevel.BP_jRPG_Character_World_C_8", {},
+                   { K2_GetComponentsByClass = function(self, c) if c == scCls then return TArray({ sc }) end return TArray({}) end })
+        local skin = new("BP_Skin_Any_C", "/Game/Map.PersistentLevel.BP_Skin_Two_C_8")   -- no owner, as in game
+        skin._class = NOCLS
+        local replaceTracked = UPVAL("replaceTracked")
+        replaceTracked(skin, OLDMID, NEWMID)
+        UNLINKED = LIST[1] == NEWMID
+        LIST[1] = OLDMID
+        FIX_T.noteName(pawn, "Lune")
+        SPAWN_T.linked(sc, skin, nil)
+        replaceTracked(skin, OLDMID, NEWMID)
+        LINKED = LIST[1] == NEWMID
+        -- a pawn dressed on its own mesh (battle, menu, companion, cutscene): it has no owner, and
+        -- its own skin component holds the list (PC dump 17 Oct: BP_Sciel_Battle_C, 6 instances)
+        LIST[1] = OLDMID
+        PROPS_READ = {}
+        local battle = new("BP_Sciel_Battle_C", "/Game/Map.PersistentLevel.BP_Sciel_Battle_C_8",
+          setmetatable({}, { __index = function(_, key) PROPS_READ[key] = true end }),
+          { K2_GetComponentsByClass = function(self, c) if c == scCls then return TArray({ sc }) end return TArray({}) end })
+        battle._class = new("BlueprintGeneratedClass", "/Game/Characters/Sciel/BP_Sciel_Battle.BP_Sciel_Battle_C")
+        replaceTracked(battle, OLDMID, NEWMID)
+        OWNLIST = LIST[1] == NEWMID
+        OWNPROP = PROPS_READ.AllMeshMaterials == true
+        -- Wear.ownMaterials (a body back on its outfit's own mesh, its Wear record gone): the worn
+        -- mesh's leftovers go, and the game's own instance of a slot's material is put back where
+        -- the game's list still holds it (PC 17 Nov live dump: every slot of an untouched body has one)
+        local coat = new("MaterialInstanceConstant", "/Game/Characters/Sciel/Base/MI_Coat.MI_Coat")
+        GAMEMID = new("MaterialInstanceDynamic", "/Game/Map.PersistentLevel.BP_Sciel_Battle_C_8.CharacterMesh0.MID_7", { Parent = coat })
+        LIST = { OLDMID, GAMEMID }
+        local over = { [0] = OLDMID, [1] = OLDMID }             -- what the worn mesh left on both slots
+        local cm = new("SkeletalMeshComponent", "/Game/Map.PersistentLevel.BP_Sciel_Battle_C_8.CharacterMesh0", {}, {
+          GetNumMaterials = function() return 2 end,
+          GetMaterial = function(self, i) return over[i] or (i == 0 and coat or nil) end,   -- slot 1: none in the mesh
+          SetMaterial = function(self, i, m) over[i] = m end })
+        UPVAL("Wear").ownMaterials(battle, cm, nil)
+        OWN_SLOT0, OWN_SLOT1 = cm:GetMaterial(0) == GAMEMID, cm:GetMaterial(1) == nil
+        -- shown again (the same skin actor through the hook a second time): Clean cleans it again
+        local Clean, S = UPVAL("Clean"), UPVAL("SETTINGS")
+        local realActor, realClean = Clean.actor, S.clean
+        CLEANED = {}
+        Clean.actor = function(a) CLEANED[#CLEANED + 1] = a end
+        S.clean = true
+        SPAWN_T.linked(sc, skin, nil)
+        Clean.actor, S.clean = realActor, realClean
+        RECLEANED = #CLEANED == 1 and CLEANED[1] == skin
+        -- book ch 17: the hook's objects are checked against the names taken in the hook; a
+        -- wrapper whose object changed in between (address reused) is not linked
+        local other = new("BP_Skin_Any_C", "/Game/Map.PersistentLevel.BP_Skin_Three_C_8")
+        other._class = NOCLS
+        local scName = sc:GetFullName()
+        SPAWN_T.linked(sc, other, nil, { scName, "BP_Skin_Any_C /Game/Map.PersistentLevel.BP_Skin_Old_C_1" })
+        local ko = KNOWN[other:GetAddress()]
+        STALE_LINKED = ko ~= nil and ko.char ~= nil
+        -- ... and the game's name for a character is kept with its full name
+        FIX_T.noteName(pawn, "Lune")
+        NAME_BEFORE = FIX_T.nameOf(pawn)
+        local oldPath = pawn._path
+        pawn._path = "/Game/Map.PersistentLevel.BP_jRPG_Character_World_C_9"   -- another object there now
+        NAME_REUSED = FIX_T.nameOf(pawn)
+        pawn._path = oldPath
+      end'''))
+    check('  the hook\'s objects are checked by the names taken in the hook (a reused address is not linked)',
+          G.STALE_LINKED is False, G.STALE_LINKED)
+    check('  the game\'s name for a character is not handed to another object at its address',
+          G.NAME_BEFORE == 'Lune' and G.NAME_REUSED is None, (G.NAME_BEFORE, G.NAME_REUSED))
+    check('a pawn without an owner: the instance list on its own skin component gets the new instance '
+          '(the list { owner, actor } started with nil, so nothing was looked at)', G.OWNLIST is True, G.OWNLIST)
+    check('  and its Blueprint\'s AllMeshMaterials is not read by name (only on outfit actors)',
+          G.OWNPROP is False, G.OWNPROP)
+    check('a body back on its outfit\'s own mesh without a Wear record: the game\'s own instance of the slot\'s '
+          'material is put back, and a slot the mesh has no material for is empty again',
+          G.OWN_SLOT0 is True and G.OWN_SLOT1 is True, (G.OWN_SLOT0, G.OWN_SLOT1))
+    # book ch 17: a pass noted a skin only when its address was new, so a new skin at a dead one's
+    # address kept the dead one's entry (and was never "shown again")
+    gt(L.eval('''function()
+        for addr, k in pairs(KNOWN) do KNOWN[addr] = nil end
+        UPVAL("runApply")()
+        local addr, k = next(KNOWN)
+        KNOWN[addr] = { a = k.a, name = "BP_Old_C /Game/Map.PersistentLevel.BP_Old_C_1" }   -- the dead one's
+        UPVAL("runApply")()
+        REUSED_NOTED = KNOWN[addr].name == k.name
+      end'''))
+    check('a pass notes a new skin at a dead one\'s address (the old entry is replaced)', G.REUSED_NOTED is True,
+          G.REUSED_NOTED)
+    # book ch 17: characterOf's saved character is kept with the object's full name, so a new
+    # object at the address doesn't inherit it
+    gt(L.eval('''function()
+        local skin = new("BP_Skin_Any_C", "/Game/Map.PersistentLevel.BP_Skin_Four_C_8")
+        skin._class = NOCLS
+        UPVAL("CHAR_OF")[skin:GetAddress()] = { name = skin:GetFullName(), char = "Lune" }
+        CO_SKIN = skin
+        CO_BEFORE = UPVAL("characterOf")(skin)
+      end'''))
+    gt(L.eval('''function()
+        CO_SKIN._path = "/Game/Map.PersistentLevel.BP_Skin_Five_C_8"      -- another object there now
+        CO_AFTER = UPVAL("characterOf")(CO_SKIN)
+      end'''))
+    check('a character saved for an address is not handed to another object there', G.CO_BEFORE == 'Lune'
+          and G.CO_AFTER != 'Lune', (G.CO_BEFORE, G.CO_AFTER))
+    # book ch 18: an empty slot's material on a tie of namesake counts is the first candidate (the
+    # body's material for a slot of that name before its skin material); no test held it
+    gt(L.eval('''function()
+        local Wear = UPVAL("Wear")
+        local realCount = Wear.likeCount
+        Wear.likeCount = function(_, m) return m._n end
+        local slotMat = new("MaterialInstanceConstant", "/Game/Characters/MI_Slot_Same.MI_Slot_Same")
+        local skinMat = new("MaterialInstanceConstant", "/Game/Characters/MI_Skin_Same.MI_Skin_Same")
+        slotMat._n, skinMat._n = 2, 2
+        local m, how = Wear.pickDonor({}, nil, { byName = { mat1 = slotMat }, skin = skinMat }, "mat1")
+        TIE_FIRST = m == slotMat and how == "the body's material for slot mat1"
+        skinMat._n = 3
+        TIE_MORE = Wear.pickDonor({}, nil, { byName = { mat1 = slotMat }, skin = skinMat }, "mat1") == skinMat
+        Wear.likeCount = realCount
+      end'''))
+    check('an empty slot: on a tie the material for the slot of that name wins, more namesakes win otherwise',
+          G.TIE_FIRST is True and G.TIE_MORE is True, (G.TIE_FIRST, G.TIE_MORE))
+    check('a skin actor\'s new instance goes into its character\'s list, found through the hook\'s link (not an owner)',
+          G.UNLINKED is False and G.LINKED is True, (G.UNLINKED, G.LINKED))
+    check('  and with Clean on, a skin actor shown again is cleaned again (it keeps its old masks)',
+          G.RECLEANED is True, len(L.eval('CLEANED') or {}))
     # audit 17 Oct: skins made while a map loads are left to the map-load pass, and only the
     # re-check noted them, so the game re-showing one later (no BeginPlay) went unseen
     gt(L.eval('''function()
@@ -467,6 +613,55 @@ def memo_white_box(check):
           (G.CAMP_NAMES, list(L.eval('CAMP_READS').values())))
     check('  and its character comes from its skin component found by class, not from its property',
           G.CAMP_CHAR == 'Sciel' and len(L.eval('CAMP_READS')) == 0, (G.CAMP_CHAR, list(L.eval('CAMP_READS').values())))
+    # book review, 18 Oct: a skin actor whose Body is a component of its own with a run-time name.
+    # Wear only works on components named Body/CharacterMesh0, so the property name must win
+    gt(L.eval(r'''function()
+        local function pr(cls, name) return { GetClass = function() return { GetFName = function() return FName(cls) end } end,
+                                             GetFName = function() return FName(name) end } end
+        local skinCls = new("BlueprintGeneratedClass", "/Game/Characters/Skins/BP_Skin_Own.BP_Skin_Own_C")
+        skinCls._super = { GetFName = function() return FName("BP_CharacterSkinBase_C") end, IsValid = function() return true end,
+                           GetSuperStruct = function() return nil end }
+        skinCls._f.ForEachProperty = function(self, cb) cb(pr("ObjectProperty", "Body")) end
+        local own = comp("/Game/Map.PersistentLevel.BP_Skin_Own_C_5", "SkeletalMeshComponent_2147459176", CHIC)
+        local a = new("BP_Skin_Own_C", "/Game/Map.PersistentLevel.BP_Skin_Own_C_5", { Body = own }, {
+          K2_GetComponentsByClass = function() return TArray({ own }) end })
+        a._class = skinCls
+        local names = {}
+        for _, e in ipairs(UPVAL("meshComponents")(a)) do names[#names + 1] = e.name end
+        OWNBODY_NAMES = table.concat(names, ",")
+      end'''))
+    check('a skin actor whose Body is its own run-time named component: listed as Body (what Wear looks for)',
+          G.OWNBODY_NAMES == 'Body', G.OWNBODY_NAMES)
+    # PC 18 Oct: the cutscene NPC BP_Cine_Lune_Mother_C (Lune's mother, an NPC mesh) was taken for
+    # Lune by a word of its class name and got Lune's worn outfit. Only a character folder in the
+    # class path, the class name's last word, or the word before _Battle_C/_Relationship_/_Quest_
+    # names the character. Camp, battle, companion and menu classes outside a character folder
+    # (camp ones are under /Heros/Camps/) are checked here with no skin component to ask.
+    gt(L.eval(r'''function()
+        local function byClass(path, n)
+          local cls = new("BlueprintGeneratedClass", path)
+          local leaf = path:match("%.([^.]+)$")
+          local a = new(leaf, "/Game/Map.PersistentLevel." .. leaf .. "_" .. n)
+          a._class = cls
+          return UPVAL("characterOf")(a) or "none"
+        end
+        CLASS_CHARS = table.concat({
+          byClass("/Game/Cinematics/Characters/BP_Cine_Lune_Mother.BP_Cine_Lune_Mother_C", 1),
+          byClass("/Game/Cinematics/Characters/BP_Cine_Lune_Father.BP_Cine_Lune_Father_C", 2),
+          byClass("/Game/Cinematics/Characters/BP_Cine_Lune.BP_Cine_Lune_C", 3),
+          byClass("/Game/Characters/Heros/Sciel/BP_Sciel_Skin_X.BP_Sciel_Skin_X_C", 4) }, ",")
+        PARTY_CHARS = table.concat({
+          byClass("/Game/Characters/Heros/Camps/BP_Character_Camp_Lune.BP_Character_Camp_Lune_C", 5),
+          byClass("/Game/Characters/Heros/Camps/RelationshipVariations/BP_Character_Camp_Lune_Relationship_Lvl1.BP_Character_Camp_Lune_Relationship_Lvl1_C", 6),
+          byClass("/Game/Characters/Heros/Camps/RelationshipVariations/BP_Character_Camp_Sciel_Relationship_Quest_1.BP_Character_Camp_Sciel_Relationship_Quest_1_C", 7),
+          byClass("/Game/Gameplay/Battle/Characters/BP_Lune_Battle.BP_Lune_Battle_C", 8),
+          byClass("/Game/Gameplay/Companions/BP_Pawn_AICompanion_Sciel.BP_Pawn_AICompanion_Sciel_C", 9),
+          byClass("/Game/UI/GameMenu/BP_GameMenu_Lune.BP_GameMenu_Lune_C", 10) }, ",")
+      end'''))
+    check('class path: a cutscene NPC named after a character (BP_Cine_Lune_Mother_C) is no party character',
+          G.CLASS_CHARS == 'none,none,Lune,Sciel', G.CLASS_CHARS)
+    check('  while camp (also Relationship/Quest), battle, companion and menu classes still name theirs',
+          G.PARTY_CHARS == 'Lune,Lune,Sciel,Lune,Sciel,Lune', G.PARTY_CHARS)
     # a material chain deeper than the 8 levels read: a parent's kept result (levels 5-10) must not
     # make a child's walk (levels 1-8) read past level 8
     gt(L.eval('''function()
@@ -619,30 +814,37 @@ STALE_VARIANTS = r"""return { { mod = "Sh", slots = {
 """
 
 
-def stale_checks(check):
-    """A texture the parent already shows is never 'back to the parent's own' (no rebuild loop)."""
+def stale_session(scen=STALE_SCEN, setup='', variants=STALE_VARIANTS):
+    """The stale scenario after three passes: (L, live log text, tmp folder)."""
     tmp = tempfile.mkdtemp(prefix='e33stale_')
     mod = os.path.join(tmp, 'E33Wardrobe')
     scripts = os.path.join(mod, 'Scripts')
     os.makedirs(scripts)
     shutil.copy(base.MAIN, scripts)
     open(os.path.join(scripts, 'menu.lua'), 'w').write('return { init = function(api) API_OUT = api end }\n')
-    open(os.path.join(scripts, 'variants.lua'), 'w').write(STALE_VARIANTS)
+    open(os.path.join(scripts, 'variants.lua'), 'w').write(variants)
     open(os.path.join(mod, 'settings.txt'), 'w').write('auto_wear = false\n')
     open(os.path.join(mod, 'selection.txt'), 'w').write('S/outfit\tS/o\n')        # no colour picked
     L = lua54.LuaRuntime(unpack_returned_tuples=True)
     L.execute(base.MOCK)
-    L.execute(STALE_SCEN)
+    L.execute(scen)
     L.eval('function(src, name) local f, e = load(src, name); if not f then error(e) end; return f end')(
         open(base.MAIN, encoding='utf-8').read(), '@' + os.path.join(scripts, 'main.lua'))()
     G = L.globals()
     W = G.API_OUT
     G.settle()
-    L.execute('PLAIN_MID = PLAIN:GetMaterial(0)')
+    L.execute(UPVAL)
+    L.execute('PLAIN_MID = PLAIN:GetMaterial(0)\n' + setup)
     for _ in range(3):
         W.applyAll('test')
         G.settle()
-    lv = open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read()
+    return L, open(os.path.join(mod, 'live_log.txt'), encoding='utf-8').read(), tmp
+
+
+def stale_checks(check):
+    """A texture the parent already shows is never 'back to the parent's own' (no rebuild loop)."""
+    L, lv, tmp = stale_session()
+    G = L.globals()
     back = [x for x in lv.splitlines() if 'textures back to' in x]
     plain_back = [x for x in back if 'BP_Lune_Skin_Share_C_1' in x]
     left_back = [x for x in back if 'BP_Lune_Skin_Share_C_2' in x]
@@ -652,6 +854,44 @@ def stale_checks(check):
     check('  a colour the instance kept from an unpicked variant still goes back to the parent\'s texture, once',
           len(left_back) == 1 and G.colorOf(G.LEFT) == '/Game/Mods/Sh/T_Lace_D.T_Lace_D', (left_back, G.colorOf(G.LEFT)))
     check('  no access violations', L.eval('AV') == 0, L.eval('AVREPORT()'))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # Found while writing the book (ch 9): the parent's link is empty, and what the body showed
+    # before (the empty-texture donor) is the unpicked colour's texture. The fill put it back after
+    # every "back to the parent's own", so each pass rebuilt the instance and filled it again.
+    empty = STALE_SCEN.replace('local shareList = { { "Color", TEX["/Game/Mods/Sh/T_Lace_D"] } }',
+                               'local shareList = { { "Color", NULLOBJ() } }')
+    L, lv, tmp = stale_session(empty, 'UPVAL("Wear").donor.Lune = { Color = TEX["/Game/ZWCOL0001/Sh/T_Lace_D"] }')
+    G = L.globals()
+    left = [x for x in lv.splitlines() if 'BP_Lune_Skin_Share_C_2' in x and ('textures back to' in x or 'texture Color' in x)]
+    check('stale + empty link: a texture of an unpicked colour is not used to fill it (no rebuild-and-refill each pass)',
+          len(left) == 1 and 'textures back to' in left[0] and G.colorOf(G.LEFT) != '/Game/ZWCOL0001/Sh/T_Lace_D.T_Lace_D',
+          (left, G.colorOf(G.LEFT)))
+    check('  no access violations', L.eval('AV') == 0, L.eval('AVREPORT()'))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # the same with the player's fix "the game's own texture" on that link (book ch 9 review): the
+    # donor is checked on that path too
+    # the picked outfit also brings a texture that fits "Color" by kind: with "the game's own" chosen
+    # it must not be used instead
+    kind_scen = empty + '\ntex("/Game/ZWOUT0002/Sh/T_Body_Color")\n'
+    kind_vars = STALE_VARIANTS.replace(
+        '["/Game/Mods/Sh/MI_Share"]',
+        '["/Game/Mods/Sh/T_Body_Color"] = { "/Game/ZWOUT0002/Sh/T_Body_Color", "T_Body_Color", "Texture2D", false },\n'
+        '      ["/Game/Mods/Sh/MI_Share"]', 1).replace(       # the player's rule, as the app writes it
+        '{ id = "S/o", label = "o", map',
+        '{ id = "S/o", label = "o", fix = { tex = { ["/game/mods/sh/mi_share|Color"] = "game" } }, map', 1)
+    assert kind_vars.count('fix = ') == 1 and 'T_Body_Color' in kind_vars
+    L, lv, tmp = stale_session(kind_scen, 'UPVAL("Wear").donor.Lune = { Color = TEX["/Game/ZWCOL0001/Sh/T_Lace_D"] }',
+                               kind_vars)
+    G = L.globals()
+    left = [x for x in lv.splitlines() if 'BP_Lune_Skin_Share_C_2' in x and ('textures back to' in x or 'texture Color' in x)]
+    check('  with "the game\'s own" chosen for that link: no rebuild-and-refill each pass either',
+          len(left) == 1 and 'textures back to' in left[0] and G.colorOf(G.LEFT) != '/Game/ZWCOL0001/Sh/T_Lace_D.T_Lace_D',
+          (left, G.colorOf(G.LEFT)))
+    check('    and no mod texture of that kind instead: the link stays empty, as the player asked for the game\'s',
+          G.colorOf(G.LEFT) is None and '-> /Game/ZWOUT0002/Sh/T_Body_Color' not in lv,
+          (G.colorOf(G.LEFT), [x for x in lv.splitlines() if '-> /Game/ZWOUT0002/Sh/T_Body_Color' in x][:2]))
     shutil.rmtree(tmp, ignore_errors=True)
 
 

@@ -124,8 +124,10 @@ in the library are never changed. After a fix, press **Reload** in the in-game m
   older version of the same mod), copy it into this mod. The copy is the app's own: it stays when
   the other mod is removed. The mod is prepared again afterwards.
 - **Fixes** in the details lists every fix of the mod with **Undo** (and **Undo all**).
-- **Compare...** on the note "Two versions of one mod?": both mods side by side (downloads,
-  version, date added, options, size, the shared files). Remove the one you don't want.
+- **Compare...** on the note that another mod has some of this mod's new files (only one copy of
+  each loads in game): both mods side by side (downloads, version, date added, options, size, the
+  shared files). If one is an older download of the other, remove it; two different mods can
+  both stay (Cancel), but one may use the other's copy.
 
 **Tools** in the toolbar:
 
